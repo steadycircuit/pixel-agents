@@ -66,6 +66,7 @@ export type ClientMessage =
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
+  providerId: string;
   providerName: string;
   installCommand: string;
   docsUrl: string;

@@ -362,6 +362,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   // 1. Provider capabilities (must arrive before any agent messages)
   send({
     type: 'providerCapabilities',
+    providerId: activeProvider.id,
     providerName: activeProvider.displayName,
     installCommand: activeProvider.installCommand,
     docsUrl: activeProvider.docsUrl,

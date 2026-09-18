@@ -69,6 +69,7 @@ export interface WorkspaceFolder {
 }
 
 interface ExtensionMessageState {
+  providerId: string;
   providerName: string;
   providerInstallCommand: string;
   providerDocsUrl: string;
@@ -124,6 +125,7 @@ export function useExtensionMessages(
   onLayoutLoaded?: (layout: OfficeLayout) => void,
   isEditDirty?: () => boolean,
 ): ExtensionMessageState {
+  const [providerId, setProviderId] = useState('claude');
   const [providerName, setProviderName] = useState('Claude Code');
   const [providerInstallCommand, setProviderInstallCommand] = useState(
     'npm install -g @anthropic-ai/claude-code',
@@ -216,6 +218,7 @@ export function useExtensionMessages(
       }
 
       if (msg.type === 'providerCapabilities') {
+        if (typeof msg.providerId === 'string') setProviderId(msg.providerId);
         if (typeof msg.providerName === 'string') setProviderName(msg.providerName);
         if (typeof msg.installCommand === 'string') setProviderInstallCommand(msg.installCommand);
         if (typeof msg.docsUrl === 'string') setProviderDocsUrl(msg.docsUrl);
@@ -770,6 +773,7 @@ export function useExtensionMessages(
   }, [subagentTools, subagentCharacters, getOfficeState]);
 
   return {
+    providerId,
     providerName,
     providerInstallCommand,
     providerDocsUrl,

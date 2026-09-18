@@ -557,6 +557,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         // from the first frame.
         this.webview?.postMessage({
           type: 'providerCapabilities',
+          providerId: activeProvider.id,
           providerName: activeProvider.displayName,
           installCommand: activeProvider.installCommand,
           docsUrl: activeProvider.docsUrl,

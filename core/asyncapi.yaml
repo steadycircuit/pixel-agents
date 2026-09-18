@@ -155,10 +155,12 @@ components:
         sub-agent characters.
       type: object
       additionalProperties: false
-      required: [type, providerName, installCommand, docsUrl, readingTools, subagentToolNames]
+      required: [type, providerId, providerName, installCommand, docsUrl, readingTools, subagentToolNames]
       properties:
         type:
           const: providerCapabilities
+        providerId:
+          type: string
         providerName:
           type: string
         installCommand:

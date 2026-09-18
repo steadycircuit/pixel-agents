@@ -91,6 +91,7 @@ function App() {
     hooksStatusSeq,
     hooksInfoShown,
     consentRequest,
+    providerId,
     providerName,
     providerInstallCommand,
     providerDocsUrl,
@@ -160,9 +161,8 @@ function App() {
     onClose: handleIntroClose,
   } = useIntroTour({ consentRequest, hooksInstalled, hooksStatusSeq, dismissConsentRequest });
 
-  // The Settings surface renders one provider today; its checkbox binds to
-  // the Claude row of the per-provider install-state map.
-  const claudeHooksInstalled = hooksInstalled['claude'] === true;
+  // The Settings surface renders the active provider's install state.
+  const activeHooksInstalled = hooksInstalled[providerId] === true;
 
   // Mutate folder→Area mappings locally + send to server. Updates OfficeState in
   // the same tick so a follow-up agentCreated picks up the new mapping.
@@ -457,7 +457,7 @@ function App() {
           message), NOT the hooksEnabled preference: hooksEnabled defaults true
           while first-run consent is still pending, and announcing "Instant
           Detection Active" before anything is installed would be a lie. */}
-      {hooksEnabled && claudeHooksInstalled && !hooksInfoShown && !hooksTooltipDismissed && (
+      {hooksEnabled && activeHooksInstalled && !hooksInfoShown && !hooksTooltipDismissed && (
         <Tooltip
           title="Instant Detection Active"
           position="top-right"
@@ -497,8 +497,8 @@ function App() {
             <li className="text-sm mb-2">Sound notifications play immediately</li>
           </ul>
           <p className="mb-12 text-text-muted">
-            This works through Claude Code Hooks, small event listeners that notify Pixel Agents
-            whenever something happens in your Claude sessions.
+            This works through {providerName} Hooks, small event listeners that notify Pixel Agents
+            whenever something happens in your {providerName} sessions.
           </p>
           <div className="text-center">
             <button
@@ -554,22 +554,17 @@ function App() {
           setWatchAllSessions(newVal);
           transport.send({ type: 'setWatchAllSessions', enabled: newVal });
         }}
-        hooksInstalled={claudeHooksInstalled}
+        hooksInstalled={activeHooksInstalled}
         onToggleHooksEnabled={() => {
           // Toggle the DISPLAYED state (actual install), not the preference: when the two disagree — preference on,
           // nothing installed while consent is pending — toggling the preference would turn hooks OFF for a user
           // asking for ON. No optimistic local update either; both backends answer with the truthful hooksStatus this
-          // checkbox renders, so it lands correct instead of flickering when an install fails. The providerId is
-          // ECHOED from that row (never originated here), so nothing sends until the row has arrived.
-          const [rowProviderId] =
-            Object.entries(hooksInstalled).find(([id]) => id === 'claude') ?? [];
-          if (rowProviderId !== undefined) {
-            transport.send({
-              type: 'setHooksEnabled',
-              providerId: rowProviderId,
-              enabled: !claudeHooksInstalled,
-            });
-          }
+          // checkbox renders, so it lands correct instead of flickering when an install fails.
+          transport.send({
+            type: 'setHooksEnabled',
+            providerId,
+            enabled: !activeHooksInstalled,
+          });
         }}
         showAreas={showAreas}
         onToggleShowAreas={onToggleShowAreas}
