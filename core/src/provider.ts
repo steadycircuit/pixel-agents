@@ -68,6 +68,9 @@ export interface HookProvider {
   readonly kind: 'hook';
   readonly id: string;
   readonly displayName: string;
+  /** First-run onboarding details shown by the shared webview tour. */
+  readonly installCommand: string;
+  readonly docsUrl: string;
   /** Protocol version. Server refuses to dispatch events from a provider whose
    *  version it doesn't understand. Bump on every breaking change to AgentEvent
    *  / TeamProvider / HookProvider. Start at 1. */

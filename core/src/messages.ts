@@ -66,6 +66,9 @@ export type ClientMessage =
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
+  providerName: string;
+  installCommand: string;
+  docsUrl: string;
   readingTools: string[];
   subagentToolNames: string[];
 }

@@ -91,6 +91,9 @@ function App() {
     hooksStatusSeq,
     hooksInfoShown,
     consentRequest,
+    providerName,
+    providerInstallCommand,
+    providerDocsUrl,
     dismissConsentRequest,
     areaMappings,
     setAreaMappings,
@@ -584,6 +587,9 @@ function App() {
           officeState={officeState}
           headline={intro.headline}
           disclosure={intro.disclosure}
+          providerName={providerName}
+          providerInstallCommand={providerInstallCommand}
+          providerDocsUrl={providerDocsUrl}
           containerRef={containerRef}
           zoom={editor.zoom}
           panRef={editor.panRef}

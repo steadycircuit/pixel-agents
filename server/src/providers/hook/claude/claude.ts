@@ -294,6 +294,8 @@ export const claudeProvider: HookProvider = {
   kind: 'hook',
   id: 'claude',
   displayName: 'Claude Code',
+  installCommand: 'npm install -g @anthropic-ai/claude-code',
+  docsUrl: 'https://claude.com/claude-code',
   protocolVersion: 1,
 
   normalizeHookEvent,

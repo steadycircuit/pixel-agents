@@ -69,6 +69,9 @@ export interface WorkspaceFolder {
 }
 
 interface ExtensionMessageState {
+  providerName: string;
+  providerInstallCommand: string;
+  providerDocsUrl: string;
   agents: number[];
   selectedAgent: number | null;
   agentTools: Record<number, ToolActivity[]>;
@@ -121,6 +124,11 @@ export function useExtensionMessages(
   onLayoutLoaded?: (layout: OfficeLayout) => void,
   isEditDirty?: () => boolean,
 ): ExtensionMessageState {
+  const [providerName, setProviderName] = useState('Claude Code');
+  const [providerInstallCommand, setProviderInstallCommand] = useState(
+    'npm install -g @anthropic-ai/claude-code',
+  );
+  const [providerDocsUrl, setProviderDocsUrl] = useState('https://claude.com/claude-code');
   const [agents, setAgents] = useState<number[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<number | null>(null);
   const [agentTools, setAgentTools] = useState<Record<number, ToolActivity[]>>({});
@@ -208,6 +216,9 @@ export function useExtensionMessages(
       }
 
       if (msg.type === 'providerCapabilities') {
+        if (typeof msg.providerName === 'string') setProviderName(msg.providerName);
+        if (typeof msg.installCommand === 'string') setProviderInstallCommand(msg.installCommand);
+        if (typeof msg.docsUrl === 'string') setProviderDocsUrl(msg.docsUrl);
         setProviderCapabilities({
           readingTools: msg.readingTools,
           subagentToolNames: msg.subagentToolNames,
@@ -759,6 +770,9 @@ export function useExtensionMessages(
   }, [subagentTools, subagentCharacters, getOfficeState]);
 
   return {
+    providerName,
+    providerInstallCommand,
+    providerDocsUrl,
     agents,
     selectedAgent,
     agentTools,
