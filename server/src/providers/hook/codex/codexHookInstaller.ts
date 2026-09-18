@@ -1,0 +1,170 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
+import { HOOK_SCRIPTS_DIR } from '../../../constants.js';
+import {
+  CODEX_HOOK_CONFIG_DIR,
+  CODEX_HOOK_CONFIG_NAME,
+  CODEX_HOOK_EVENTS,
+  CODEX_HOOK_SCRIPT_NAME,
+  CODEX_SETTINGS_FRESH_FILE_MODE,
+  CODEX_SETTINGS_TMP_SUFFIX,
+} from './constants.js';
+
+type HookHandler = {
+  type: 'command';
+  command: string;
+  timeout?: number;
+  async?: boolean;
+};
+
+type HookEntry = { matcher?: string; hooks: HookHandler[] };
+type CodexHooksConfig = { hooks?: Record<string, HookEntry[]>; [key: string]: unknown };
+
+export const CODEX_SETTINGS_UNPARSEABLE_MESSAGE = "Couldn't parse ~/.codex/hooks.json";
+
+function settingsPath(): string {
+  return path.join(os.homedir(), CODEX_HOOK_CONFIG_DIR, CODEX_HOOK_CONFIG_NAME);
+}
+
+function scriptPath(): string {
+  return path.join(os.homedir(), HOOK_SCRIPTS_DIR, CODEX_HOOK_SCRIPT_NAME);
+}
+
+function ourCommand(): string {
+  return `node "${scriptPath()}"`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isOurHook(value: unknown): value is HookHandler {
+  return isRecord(value) && value.type === 'command' && value.command === ourCommand();
+}
+
+function readConfig(): { raw: string | null; config: CodexHooksConfig } {
+  const file = settingsPath();
+  if (!fs.existsSync(file)) return { raw: null, config: {} };
+  const raw = fs.readFileSync(file, 'utf8');
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) throw new Error('root is not an object');
+    return { raw, config: parsed as CodexHooksConfig };
+  } catch (error) {
+    throw new Error(CODEX_SETTINGS_UNPARSEABLE_MESSAGE, { cause: error });
+  }
+}
+
+function cleanEntries(entries: unknown): { entries: HookEntry[]; changed: boolean } {
+  if (!Array.isArray(entries)) throw new Error('a Codex hooks event value is not an array');
+  let changed = false;
+  const next: HookEntry[] = [];
+  for (const entry of entries) {
+    if (!isRecord(entry) || !Array.isArray(entry.hooks)) {
+      next.push(entry as HookEntry);
+      continue;
+    }
+    const hooks = entry.hooks.filter((hook) => {
+      const remove = isOurHook(hook);
+      if (remove) changed = true;
+      return !remove;
+    });
+    if (hooks.length === 0 && entry.hooks.length > 0) {
+      changed = true;
+      continue;
+    }
+    next.push({ ...entry, hooks } as HookEntry);
+  }
+  return { entries: next, changed };
+}
+
+function writeConfig(config: CodexHooksConfig, mode?: number): void {
+  const file = settingsPath();
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const tmp = file + CODEX_SETTINGS_TMP_SUFFIX;
+  fs.writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', { mode: mode ?? CODEX_SETTINGS_FRESH_FILE_MODE });
+  fs.renameSync(tmp, file);
+}
+
+function mutateConfig(mutator: (config: CodexHooksConfig) => boolean): boolean {
+  const { raw, config } = readConfig();
+  const changed = mutator(config);
+  if (!changed) return false;
+  if (raw !== null && fs.readFileSync(settingsPath(), 'utf8') !== raw) {
+    throw new Error('~/.codex/hooks.json changed while Pixel Agents was installing hooks');
+  }
+  const mode = fs.existsSync(settingsPath()) ? fs.statSync(settingsPath()).mode & 0o777 : undefined;
+  writeConfig(config, mode);
+  return true;
+}
+
+export function areHooksInstalled(): boolean {
+  try {
+    const { config } = readConfig();
+    const hooks = config.hooks;
+    if (!isRecord(hooks)) return false;
+    return Object.values(hooks).some(
+      (entries) => Array.isArray(entries) && entries.some((entry) => isRecord(entry) && Array.isArray(entry.hooks) && entry.hooks.some(isOurHook)),
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function installHooks(): Promise<void> {
+  mutateConfig((config) => {
+    if (config.hooks === undefined) config.hooks = {};
+    if (!isRecord(config.hooks)) throw new Error('hooks in ~/.codex/hooks.json is not an object');
+    let changed = false;
+    for (const event of CODEX_HOOK_EVENTS) {
+      const existing = config.hooks[event];
+      if (existing !== undefined && !Array.isArray(existing)) {
+        throw new Error(`hooks.${event} in ~/.codex/hooks.json is not an array`);
+      }
+      const cleaned = existing ? cleanEntries(existing) : { entries: [], changed: false };
+      const next: HookEntry[] = [
+        ...cleaned.entries,
+        {
+          matcher: '',
+          hooks: [{ type: 'command', command: ourCommand(), timeout: 5, async: true }],
+        },
+      ];
+      if (JSON.stringify(existing ?? []) !== JSON.stringify(next)) changed = true;
+      config.hooks[event] = next;
+    }
+    return changed;
+  });
+}
+
+export async function uninstallHooks(): Promise<void> {
+  mutateConfig((config) => {
+    if (!isRecord(config.hooks)) return false;
+    let changed = false;
+    for (const event of Object.keys(config.hooks)) {
+      const cleaned = cleanEntries(config.hooks[event]);
+      if (!cleaned.changed) continue;
+      changed = true;
+      if (cleaned.entries.length > 0) config.hooks[event] = cleaned.entries;
+      else delete config.hooks[event];
+    }
+    if (Object.keys(config.hooks).length === 0) delete config.hooks;
+    return changed;
+  });
+}
+
+export function copyHookScript(extensionPath: string): boolean {
+  const source = path.join(extensionPath, 'dist', 'hooks', CODEX_HOOK_SCRIPT_NAME);
+  const destination = scriptPath();
+  try {
+    fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+    if (!fs.existsSync(source)) return false;
+    fs.copyFileSync(source, destination);
+    fs.chmodSync(destination, 0o700);
+    return true;
+  } catch {
+    return false;
+  }
+}

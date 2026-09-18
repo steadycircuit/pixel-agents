@@ -182,6 +182,14 @@ export class HookEventHandler {
         const agent = this.agents.get(existingAgentId);
         if (agent) {
           agent.hookDelivered = true;
+          // Codex supplies the transcript path on SessionStart, while a VS
+          // Code-launched agent is created before Codex has generated it.
+          // Adopt the authoritative path here without relying on a stable
+          // Codex transcript schema.
+          if (transcriptPath) {
+            agent.jsonlFile = transcriptPath;
+            agent.projectDir = path.dirname(transcriptPath);
+          }
         }
         if (debug)
           console.log(
@@ -194,6 +202,10 @@ export class HookEventHandler {
         if (agent.sessionId === event.session_id) {
           this.registerAgent(agent.sessionId, id);
           agent.hookDelivered = true;
+          if (transcriptPath) {
+            agent.jsonlFile = transcriptPath;
+            agent.projectDir = path.dirname(transcriptPath);
+          }
           if (debug)
             console.log(
               `[Pixel Agents] Hook: Agent ${id} - SessionStart(source=${source}) auto-discovered`,

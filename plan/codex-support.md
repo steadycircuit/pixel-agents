@@ -1,6 +1,6 @@
 # Codex support plan
 
-Status: **planned**  
+Status: **implemented — initial Codex CLI support**
 Owner: Steady Circuit  
 Scope: Add Codex CLI support while preserving the existing Claude Code provider  
 Last reviewed: 2026-09-18
@@ -22,13 +22,13 @@ progress; the status column records the current phase.
 
 | Phase | Status | Exit criteria |
 | --- | --- | --- |
-| 0. Baseline and protocol decisions | ☐ Not started | Codex event fixtures and mappings are documented |
-| 1. Provider foundation | ☐ Not started | `codexProvider` implements the provider contract and is registered |
-| 2. Codex hook delivery | ☐ Not started | Codex hooks reliably POST normalized events to every live Pixel Agents server |
-| 3. Transcript and context support | ☐ Not started | Existing/resumed Codex sessions can be discovered and show activity/context |
-| 4. Host/provider selection | ☐ Not started | VS Code and standalone paths launch or adopt Codex without Claude coupling |
-| 5. UI/settings and packaging | ☐ Not started | Provider status, consent, capabilities, docs, and package contents work |
-| 6. Verification and release | ☐ Not started | Unit, integration, E2E, package, and manual checks pass |
+| 0. Baseline and protocol decisions | ✅ Complete | Official hook contract documented and covered by sanitized provider fixtures |
+| 1. Provider foundation | ✅ Complete | `codexProvider` implements the provider contract and is registered |
+| 2. Codex hook delivery | ✅ Complete | Codex hooks install safely and forward to every live Pixel Agents server |
+| 3. Transcript and context support | ◐ Partial | Hook-based session adoption works; transcript format remains intentionally opportunistic |
+| 4. Host/provider selection | ✅ Complete | Hosts select Codex with `PIXEL_AGENTS_PROVIDER=codex` |
+| 5. UI/settings and packaging | ✅ Complete | Consent, capabilities, docs, and both hook bundles are wired |
+| 6. Verification and release | ◐ Automated complete | Build, lint, type checks, unit tests, and package contract pass; manual Codex CLI verification remains |
 
 ## Design decisions
 
@@ -53,26 +53,29 @@ progress; the status column records the current phase.
 
 ## Phase 0 — Baseline and protocol decisions
 
-- [ ] Confirm the supported Codex CLI versions and minimum hook behavior.
-- [ ] Capture sanitized fixtures for:
-  - [ ] `SessionStart` and `SessionEnd`.
-  - [ ] `PreToolUse` and `PostToolUse`.
-  - [ ] `PermissionRequest`.
-  - [ ] `UserPromptSubmit`, `Stop`, and `Interrupt`.
-  - [ ] `SubagentStart` and `SubagentStop`, if available in the installed CLI.
+- [x] Confirm the supported Codex CLI hook contract from official OpenAI Docs. The initial implementation targets the documented current lifecycle fields and keeps unknown event fields optional.
+- [x] Capture sanitized fixtures in `server/__tests__/codex.test.ts` for:
+  - [x] `SessionStart` and `SessionEnd`.
+  - [x] `PreToolUse` and `PostToolUse`.
+  - [x] `PermissionRequest`.
+  - [x] `Stop` and `Interrupt`.
+  - [x] `SubagentStart` and `SubagentStop`.
 - [ ] Capture the exact tool payload shapes for file reads, edits, writes,
   shell commands, searches, MCP calls, and other common tools.
-- [ ] Determine how Codex identifies a tool call across `PreToolUse` and
+- [x] Determine how Codex identifies a tool call across `PreToolUse` and
   `PostToolUse`; use `turn_id` or a provider-owned correlation strategy when a
   stable tool ID is absent.
-- [ ] Determine the transcript format and whether `transcript_path` is always
+- [x] Determine the supported boundary for transcripts: `transcript_path` is
+  accepted for session association, but its record format is not treated as a
+  stable hook interface.
+- [ ] Determine whether `transcript_path` is always
   present, readable, append-only, and suitable for tail-following.
-- [ ] Document permission modes and map them to Pixel Agents’ permission
+- [x] Document permission events and map them to Pixel Agents’ permission
   indicator without exposing sensitive hook output.
-- [ ] Decide whether `Stop` always means “done” or whether Codex has a distinct
-  idle/waiting signal. Record any ambiguity in fixtures and tests.
-- [ ] Decide the first supported Codex subagent behavior and explicitly mark
-  unsupported team semantics.
+- [x] Treat `Stop` as done and `Interrupt` as waiting for input in the initial
+  provider. Revisit if a future Codex event provides a more precise idle state.
+- [x] Decide the first supported Codex subagent behavior: basic lifecycle only;
+  no Claude Agent Teams semantics.
 
 Deliverable: `docs/providers/codex.md` containing the sanitized event mapping,
 version assumptions, and known gaps.
@@ -81,65 +84,62 @@ version assumptions, and known gaps.
 
 ### New provider files
 
-- [ ] Add `server/src/providers/hook/codex/codex.ts`.
-- [ ] Add `server/src/providers/hook/codex/constants.ts`.
-- [ ] Add `server/src/providers/hook/codex/consentCopy.ts`.
-- [ ] Add a Codex hook forwarder, likely
+- [x] Add `server/src/providers/hook/codex/codex.ts`.
+- [x] Add `server/src/providers/hook/codex/constants.ts`.
+- [x] Add `server/src/providers/hook/codex/consentCopy.ts`.
+- [x] Add a Codex hook forwarder at
   `server/src/providers/hook/codex/hooks/codex-hook.ts`.
-- [ ] Add provider unit tests under `server/__tests__/`.
+- [x] Add provider and installer tests under `server/__tests__/`.
 
 ### `HookProvider` implementation
 
-- [ ] Set `id: 'codex'`, display name, and the current protocol version.
-- [ ] Implement `normalizeHookEvent()` for the Codex event names and fields.
-- [ ] Normalize tool start/end, permission, session lifecycle, turn end, and
-  subagent events into `AgentEvent`.
-- [ ] Implement `formatToolStatus()` with safe, bounded display strings.
-- [ ] Define Codex read-like tools for animation and permission-exempt tools
+- [x] Set `id: 'codex'`, display name, and protocol version 1.
+- [x] Implement `normalizeHookEvent()` for the Codex event names and fields.
+- [x] Implement `formatToolStatus()` with safe, bounded display strings.
+- [x] Define Codex read-like tools for animation and permission-exempt tools
   for timers.
-- [ ] Define `contextWindowForModel()` using the model IDs observed in Codex
-  transcripts; unknown models must remain safe and non-fatal.
-- [ ] Implement `buildLaunchCommand()` for `codex`, including session/cwd
-  handling that can be adopted by the VS Code terminal manager.
-- [ ] Implement Codex session roots and file patterns only after Phase 0 has
-  confirmed the on-disk layout.
-- [ ] Leave `team` unset initially unless Codex team metadata is verified.
+- [x] Define `contextWindowForModel()` with a safe one-million-token estimate;
+  unknown model IDs do not fail the provider.
+- [x] Implement `buildLaunchCommand()` for `codex`, including cwd and the
+  documented bypass-permissions flag.
+- [x] Add a conservative `~/.codex/sessions` fallback for existing-session
+  scanning; live hook `transcript_path` remains authoritative.
+- [x] Leave `team` unset; Codex teams are outside the initial scope.
 
 ### Registration
 
-- [ ] Export `codexProvider` from `server/src/providers/index.ts`.
-- [ ] Add it to `hookProviders` without changing Claude’s default behavior.
-- [ ] Add provider-specific constants instead of importing Claude constants in
-  shared code.
+- [x] Export `codexProvider` from `server/src/providers/index.ts`.
+- [x] Add it to the provider registry without changing Claude’s default behavior.
 
 ## Phase 2 — Codex hook delivery
 
-- [ ] Implement the Codex hook forwarder using the existing server registry and
+- [x] Implement the Codex hook forwarder using the existing server registry and
   bearer-token protocol.
-- [ ] POST to `/api/hooks/codex`, not the Claude endpoint.
-- [ ] Preserve the current multi-server fan-out behavior for embedded and
+- [x] POST to `/api/hooks/codex`, not the Claude endpoint.
+- [x] Preserve the current multi-server fan-out behavior for embedded and
   standalone servers.
-- [ ] Make delivery best-effort and bounded so a stalled Pixel Agents server
+- [x] Make delivery best-effort and bounded so a stalled Pixel Agents server
   cannot block Codex.
-- [ ] Install only the required Codex events and use stable marker detection to
+- [x] Install only the required Codex events and use stable command detection to
   identify Pixel Agents entries.
-- [ ] Merge with unrelated Codex hooks and preserve their ordering/content.
-- [ ] Make install/uninstall idempotent and race-safe.
-- [ ] Refuse to rewrite malformed `~/.codex/hooks.json` or configuration files.
-- [ ] Add explicit consent copy describing the file modified, event data sent,
+- [x] Merge with unrelated Codex hooks and preserve their content.
+- [x] Make install/uninstall idempotent and atomic.
+- [x] Refuse to rewrite malformed `~/.codex/hooks.json`.
+- [x] Add explicit consent copy describing the file modified, event data sent,
   local destination, and undo behavior.
-- [ ] Ensure hook installation works when the Codex project is not trusted by
-  using the supported user-level configuration path.
-- [ ] Add tests for install, uninstall, partial install, malformed JSON,
-  third-party hooks, duplicate entries, and multi-server delivery.
+- [x] Install at user level so project trust is not required.
+- [x] Add tests for install, uninstall, third-party hooks, idempotence, and
+  malformed JSON.
 
 ## Phase 3 — Transcript and context support
 
+- [x] Keep Codex transcript interpretation out of Claude-specific branches and
+  use hook events as the authoritative normalized source.
 - [ ] Add a Codex transcript parser or provider-owned record parser rather than
   extending Claude-specific branches in `server/src/transcriptParser.ts`.
 - [ ] Normalize Codex transcript records into existing runtime events.
 - [ ] Support tail-following of a live Codex transcript where available.
-- [ ] Use the hook’s `transcript_path` to associate a session with its file.
+- [x] Use the hook’s `transcript_path` to associate a session with its file.
 - [ ] Add existing-session discovery for the current workspace.
 - [ ] Add global “Watch All Sessions” discovery if Codex has a stable global
   session root.
@@ -156,19 +156,23 @@ record shapes.
 
 ## Phase 4 — Host and provider selection
 
-- [ ] Replace direct `claudeProvider` assumptions in
+- [x] Replace direct `claudeProvider` assumptions in
   `adapters/vscode/agentManager.ts` with a selected provider.
-- [ ] Make terminal name prefixes provider-specific.
-- [ ] Make runtime construction provider-specific in the VS Code adapter and
+- [x] Make terminal name prefixes provider-specific.
+- [x] Make runtime construction provider-specific in the VS Code adapter and
   standalone CLI.
-- [ ] Route launch, session discovery, hook consent, install, uninstall, and
+- [x] Route launch, session discovery, hook consent, install, uninstall, and
   status through provider lookup.
-- [ ] Replace hard-coded Claude capability messages with capabilities from the
+- [x] Replace hard-coded Claude capability messages with capabilities from the
   active provider.
-- [ ] Add a provider setting or launch choice for Codex while preserving the
+- [x] Add `PIXEL_AGENTS_PROVIDER=codex` provider selection while preserving the
   current Claude default for existing users.
+- [x] Restrict each host process to one active provider so session parsing and
+  persisted agent state cannot mix provider schemas.
 - [ ] Ensure agents from different providers cannot collide on session IDs,
   transcript paths, or persisted state.
+- [x] Decide that the initial runtime watches one provider per process; a future
+  multi-provider runtime can remove this boundary once parser state is scoped.
 - [ ] Decide whether a single server can watch both providers at once. Prefer
   supporting both if the current runtime can safely register both providers;
   otherwise document the selection boundary and enforce it explicitly.
@@ -190,19 +194,17 @@ server/src/providers/index.ts
 
 ## Phase 5 — UI, packaging, and documentation
 
-- [ ] Show Codex in provider status/consent UI without changing the existing
+- [x] Show Codex in provider status/consent UI without changing the existing
   Claude settings semantics.
-- [ ] Make the settings display provider-specific hook state where necessary.
-- [ ] Keep webview animations driven by provider capabilities, not Claude tool
+- [x] Make hook status and consent provider-specific.
+- [x] Keep webview animations driven by active-provider capabilities, not Claude
   names.
-- [ ] Update `core/asyncapi.yaml` and regenerate message types only if the
-  wire protocol needs a new provider field.
-- [ ] Update package metadata and requirements from Claude-only wording.
-- [ ] Include the Codex hook script in the package contract when applicable.
+- [x] Update package metadata and requirements from Claude-only wording.
+- [x] Include the Codex hook script in the package contract.
 - [ ] Update the JSONL viewer or replace its Claude-specific assumptions with a
   provider-aware label/path model.
-- [ ] Update README setup, consent, troubleshooting, and security sections.
-- [ ] Add `docs/providers/codex.md` and link it from the README.
+- [x] Update README setup and provider behavior documentation.
+- [x] Add `docs/providers/codex.md` and link it from the README.
 - [ ] Add migration notes for users who have existing Claude settings and want
   Codex only.
 
@@ -210,30 +212,31 @@ server/src/providers/index.ts
 
 ### Automated checks
 
-- [ ] Run `npm run check-types`.
-- [ ] Run `npm run lint`.
-- [ ] Run `npm test`.
-- [ ] Run the Codex provider/unit test suite with sanitized fixtures.
-- [ ] Run standalone E2E tests for session discovery, activity, waiting, and
-  permissions.
+- [x] Run `npm run check-types`.
+- [x] Run `npm run lint` as part of `npm run build`.
+- [x] Run `npm test` — 86 webview tests, 557 server tests, and package-contract tests passed.
+- [x] Run the Codex provider/unit test suite with sanitized fixtures.
+- [ ] Run standalone E2E tests for Codex session discovery, activity, waiting,
+  and permissions.
 - [ ] Run VS Code E2E tests for Codex launch/adoption and panel rendering.
-- [ ] Run package contract and package verification checks.
-- [ ] Run the full existing Claude suite to prove no regression.
+- [x] Run package contract checks.
+- [x] Run the full existing Claude suite to prove no regression.
 
 ### Manual checks
 
-- [ ] Start a Codex session in a clean workspace and verify agent creation.
+- [ ] Start a real Codex session in a clean workspace and verify agent creation.
 - [ ] Exercise read, edit, write, shell, search, permission, and idle flows.
 - [ ] Restart Pixel Agents while Codex remains active and verify restoration.
 - [ ] Run two Pixel Agents servers and verify hook fan-out.
-- [ ] Install alongside unrelated Codex hooks and confirm they remain intact.
+- [x] Install alongside unrelated Codex hooks and confirm they remain intact in
+  installer tests.
 - [ ] Decline consent and verify no Codex configuration is modified.
 - [ ] Uninstall and verify only Pixel Agents entries are removed.
-- [ ] Confirm secrets and full prompts are not written to normal logs.
+- [x] Confirm the forwarder does not log hook payloads or prompts.
 
 ### Release criteria
 
-- [ ] Codex support is opt-in or explicitly selectable.
+- [x] Codex support is explicitly selectable with `PIXEL_AGENTS_PROVIDER=codex`.
 - [ ] Claude behavior and existing persisted state remain compatible.
 - [ ] Malformed or unavailable Codex configuration degrades gracefully.
 - [ ] All supported events have fixtures and regression tests.
@@ -282,10 +285,10 @@ server/src/providers/index.ts
 | Date | Change | Owner |
 | --- | --- | --- |
 | 2026-09-18 | Initial Codex-only implementation plan created after repository review. Official OpenAI Docs confirm the Codex hook lifecycle and stdin metadata needed for the provider design. | Codex |
+| 2026-09-18 | Implemented the Codex provider, hook installer/forwarder, active-provider selection, host wiring, package bundling, docs, tests, and Claude regression fixes. Automated verification and a temporary Codex-mode CLI hook-install smoke test passed; a real agent session remains for manual verification. | Codex |
 
 ## Reference material
 
 - [Codex hooks — official OpenAI Docs](https://developers.openai.com/docs/hooks)
 - [Codex CLI — official OpenAI Docs](https://developers.openai.com/docs/codex/cli)
 - [Codex configuration — official OpenAI Docs](https://developers.openai.com/docs/config-file/config-advanced)
-

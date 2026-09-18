@@ -16,7 +16,7 @@ import { readLayoutFromFile, writeLayoutToFile } from './layoutPersistence.js';
 import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
-import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
+import { activeProvider, hookProviderById, hookProviders } from './providers/index.js';
 
 type WsSend = (message: Record<string, unknown>) => void;
 
@@ -298,7 +298,7 @@ async function applyHooksPreference(
       // The runtime's single hooksEnabled ref gates the CLAUDE scanners; it
       // follows only the Claude provider until the scanners grow per-provider
       // awareness alongside the Settings UI.
-      if (ctx.runtime && provider.id === claudeProvider.id) {
+      if (ctx.runtime && provider.id === activeProvider.id) {
         ctx.runtime.hooksEnabled.current = enabled;
       }
     }
@@ -337,7 +337,7 @@ function standaloneConsentEffects(
       // Durable writes are the executor's own atomic recordHooksDecline; this
       // only mirrors the live runtime ref the CLAUDE scanners read, so another
       // provider's answer can never flip Claude's fallback behavior.
-      if (ctx.runtime && provider.id === claudeProvider.id) {
+      if (ctx.runtime && provider.id === activeProvider.id) {
         ctx.runtime.hooksEnabled.current = false;
       }
     },
@@ -362,8 +362,8 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   // 1. Provider capabilities (must arrive before any agent messages)
   send({
     type: 'providerCapabilities',
-    readingTools: [...claudeProvider.readingTools],
-    subagentToolNames: [...claudeProvider.subagentToolNames],
+    readingTools: [...activeProvider.readingTools],
+    subagentToolNames: [...activeProvider.subagentToolNames],
   });
 
   // 2. Assets (from server cache, loaded at startup via pngjs)
@@ -408,7 +408,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   // settingsLoaded.hooksEnabled stays a single boolean carrying the CLAUDE
   // provider's preference until the Settings UI grows a per-provider list —
   // its sole webview reader is the hooks tooltip gate.
-  const hooksEnabled = getHooksEnabled(claudeProvider.id);
+  const hooksEnabled = getHooksEnabled(activeProvider.id);
   const showAreas = adapter?.getSetting(KEY_SHOW_AREAS, false) ?? false;
   send({
     type: 'settingsLoaded',

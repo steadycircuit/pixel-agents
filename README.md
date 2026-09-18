@@ -30,13 +30,13 @@ It ships in two forms from the same codebase:
 - **VS Code extension** — [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=pablodelucca.pixel-agents) and [Open VSX](https://open-vsx.org/extension/pablodelucca/pixel-agents). Agents launch into VS Code terminals; characters render in the panel area.
 - **Standalone CLI** — `npx pixel-agents` starts a local server and serves the same office as a browser app, useful for tmux, remote, and non-VS Code workflows.
 
-The architecture is fully agent-agnostic and editor-agnostic: a typed `HookProvider` interface defines the integration boundary so adding a new AI tool is a single subdirectory of code. Claude Code is the reference implementation today; Codex, Gemini, Cursor, and others are on the roadmap.
+The architecture is fully agent-agnostic and editor-agnostic: a typed `HookProvider` interface defines the integration boundary so adding a new AI tool is a single subdirectory of code. Claude Code and Codex CLI are supported providers.
 
 ![Pixel Agents screenshot](webview-ui/public/office.png)
 
 ## Features
 
-- **One agent, one character** — every Claude Code terminal gets its own animated character
+- **One agent, one character** — every supported Codex or Claude Code terminal gets its own animated character
 - **Live activity tracking** — characters animate based on what the agent is actually doing (writing, reading, running commands)
 - **Office layout editor** — design your office with floors, walls, and furniture using a built-in editor
 - **Speech bubbles** — visual indicators when an agent is waiting for input or awaiting permission
@@ -65,7 +65,7 @@ Most of this is still ahead. See [Issues](https://github.com/pixel-agents-hq/pix
 
 ## Requirements
 
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and configured
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) or [Codex CLI](https://developers.openai.com/docs/codex/cli) installed and configured
 - **VS Code extension:** VS Code 1.105.0 or later
 - **Standalone CLI:** Node.js 20 or later
 - Windows, Linux, or macOS
@@ -80,18 +80,22 @@ Most of this is still ahead. See [Issues](https://github.com/pixel-agents-hq/pix
 
 To use Claude with `--dangerously-skip-permissions`, hover over **+ Agent** to find the **Skip permissions mode** button. Only use this when you accept the security implications.
 
-Pixel Agents also detects Claude sessions started outside the extension. Turn on **Settings → Watch All Sessions** to include sessions from other workspaces.
+To use Codex instead, launch Pixel Agents with `PIXEL_AGENTS_PROVIDER=codex`.
+The Codex provider uses Codex command hooks and asks for consent before adding
+entries to `~/.codex/hooks.json`. See [the Codex provider guide](docs/providers/codex.md).
+
+Pixel Agents also detects sessions started outside the extension. Turn on **Settings → Watch All Sessions** to include sessions from other workspaces.
 
 ### Standalone CLI
 
-Run Pixel Agents from the workspace whose Claude sessions you want to see:
+Run Pixel Agents from the workspace whose Codex or Claude sessions you want to see:
 
 ```bash
 cd /path/to/your/project
 npx pixel-agents
 ```
 
-The CLI chooses a free local port and prints the URL. Standalone does not launch Claude for you; start Claude Code in a terminal for the same workspace. To install the command globally instead:
+The CLI chooses a free local port and prints the URL. Standalone does not launch an agent for you; start Codex or Claude Code in a terminal for the same workspace. To install the command globally instead:
 
 ```bash
 npm install --global pixel-agents
@@ -141,14 +145,14 @@ Use **Settings → Add Asset Directory** to load external characters, pets, and 
 
 ## How It Works
 
-Pixel Agents uses two Claude Code detection paths:
+Pixel Agents uses provider-specific hooks plus transcript polling:
 
-- **Hooks mode** (default) — a hook script receives Claude events such as `SessionStart`, `PreToolUse`, `PermissionRequest`, and `Stop`. It discovers active Pixel Agents servers and sends authenticated events to each one.
-- **Heuristic mode** (fallback) — when hooks are unavailable, the runtime infers agent status by scanning Claude's JSONL session transcripts under `~/.claude/projects/`. Transcripts are also read in hooks mode for details not present in an event.
+- **Hooks mode** (default) — the active provider's hook script receives lifecycle, tool, permission, and subagent events, then sends authenticated events to each live Pixel Agents server.
+- **Heuristic mode** (fallback) — when hooks are unavailable, the runtime can infer activity from a provider's transcript files where that provider exposes a usable session layout.
 
-The Claude provider normalizes both sources into a shared `AgentEvent` model. `AgentRuntime` updates the central state store, and the active transport sends typed messages to the React webview. The office renders through Canvas 2D with pathfinding and character state machines.
+The active provider normalizes both sources into a shared `AgentEvent` model. `AgentRuntime` updates the central state store, and the active transport sends typed messages to the React webview. The office renders through Canvas 2D with pathfinding and character state machines.
 
-Pixel Agents does not modify Claude Code. Its hook configuration and persistent data live under `~/.claude/` and `~/.pixel-agents/` respectively.
+Pixel Agents does not modify agent source code. Its provider hook configuration lives under the provider's user configuration directory, and Pixel Agents' persistent data lives under `~/.pixel-agents/`.
 
 ### Architecture
 
