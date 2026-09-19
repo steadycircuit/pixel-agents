@@ -1,7 +1,8 @@
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import type { AgentEvent, HookProvider } from '../../../../../core/src/provider.js';
+import type { AgentEvent, HookProvider, SessionInfo } from '../../../../../core/src/provider.js';
 import {
   BASH_COMMAND_DISPLAY_MAX_LENGTH,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
@@ -121,13 +122,66 @@ function getAllSessionRoots(): string[] {
   return [path.join(os.homedir(), '.codex', 'sessions')];
 }
 
+function isSessionActive(sessionId: string): boolean {
+  // Codex serializes writers with one lock per thread. A present lock means
+  // `exec resume` would be rejected rather than creating a second writer.
+  return fs.existsSync(
+    path.join(os.homedir(), '.codex', 'thread-writer-locks', `${sessionId}.lock`),
+  );
+}
+
+export function getSessionInfo(transcriptPath: string): SessionInfo {
+  // Codex stores sessions in a YYYY/MM/DD tree. The first record is a stable
+  // session_meta envelope containing the real session id and working directory.
+  try {
+    const fd = fs.openSync(transcriptPath, 'r');
+    try {
+      const buffer = Buffer.alloc(128 * 1024);
+      const bytes = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      for (const line of buffer.subarray(0, bytes).toString('utf8').split('\n')) {
+        if (!line.trim()) continue;
+        const record = JSON.parse(line) as Record<string, unknown>;
+        if (record.type !== 'session_meta') continue;
+        const payload = record.payload as Record<string, unknown> | undefined;
+        return {
+          sessionId:
+            typeof payload?.session_id === 'string'
+              ? payload.session_id
+              : typeof payload?.id === 'string'
+                ? payload.id
+                : undefined,
+          cwd: typeof payload?.cwd === 'string' ? payload.cwd : undefined,
+        };
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    // The file may be in the middle of being created; basename fallback is safe.
+  }
+  return {};
+}
+
 function buildLaunchCommand(
   _sessionId: string,
   cwd: string,
-  opts?: { bypassPermissions?: boolean },
+  opts?: { bypassPermissions?: boolean; initialPrompt?: string },
 ) {
+  if (opts?.initialPrompt) {
+    const args = ['exec'];
+    if (opts.bypassPermissions) args.push('--dangerously-bypass-approvals-and-sandbox');
+    args.push(opts.initialPrompt);
+    return { command: 'codex', args, env: { PWD: cwd } };
+  }
   const args = opts?.bypassPermissions ? ['--dangerously-bypass-approvals-and-sandbox'] : [];
   return { command: 'codex', args, env: { PWD: cwd } };
+}
+
+function buildPromptCommand(sessionId: string, cwd: string, prompt: string) {
+  // `resume` starts the interactive TUI, which cannot accept input when the
+  // server launches it detached with stdio ignored. `exec resume` is the
+  // non-interactive form and writes the turn back to the existing transcript.
+  return { command: 'codex', args: ['exec', 'resume', sessionId, prompt], env: { PWD: cwd } };
 }
 
 export function contextWindowForModel(_model: string | undefined): number {
@@ -154,8 +208,11 @@ export const codexProvider: HookProvider = {
   contextWindowForModel,
   getSessionDirs,
   getAllSessionRoots,
+  getSessionInfo,
+  isSessionActive,
   sessionFilePattern: '*.jsonl',
   buildLaunchCommand,
+  buildPromptCommand,
 };
 
 export { copyHookScript };

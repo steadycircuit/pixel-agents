@@ -733,7 +733,9 @@ export function OfficeCanvas({
           officeState.cameraFollowId = null;
         } else {
           officeState.selectedAgentId = hitId;
-          officeState.cameraFollowId = hitId;
+          // Selection is an interaction with the agent, not a camera command.
+          // Keep the user's current view where it is.
+          officeState.cameraFollowId = null;
         }
         onClick(hitId); // still focus terminal
         return;

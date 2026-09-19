@@ -5,7 +5,7 @@ import {
   CARPET_DEFAULT_ACCENT_COLOR,
   CARPET_DEFAULT_COLOR,
   LAYOUT_SAVE_DEBOUNCE_MS,
-  ZOOM_DEFAULT_DPR_FACTOR,
+  ZOOM_DEFAULT,
   ZOOM_MAX,
   ZOOM_MIN,
 } from '../constants.js';
@@ -98,13 +98,9 @@ interface EditorActions {
   handleAreaColorChange: (label: string, color: string) => void;
 }
 
-/** Default integer zoom (device pixels per sprite pixel) for a fresh session.
- *  Lives here, with the zoom state it seeds, rather than in the office modules:
- *  it reads `devicePixelRatio`, and a viewport concern in a state module drags
- *  the DOM into every graph that imports it (OfficeState's included). */
+/** Default integer zoom (device pixels per sprite pixel) for a fresh session. */
 function defaultZoom(): number {
-  const dpr = window.devicePixelRatio || 1;
-  return Math.max(ZOOM_MIN, Math.round(ZOOM_DEFAULT_DPR_FACTOR * dpr));
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, ZOOM_DEFAULT));
 }
 
 export function useEditorActions(

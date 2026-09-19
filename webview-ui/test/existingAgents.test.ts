@@ -34,6 +34,7 @@ interface AddAgentCall {
   seatId?: string;
   skipSpawnEffect?: boolean;
   folderName?: string;
+  displayName?: string;
 }
 
 /** A fake office that records addAgent calls, mirroring how officeCanvasCursor
@@ -48,9 +49,20 @@ function fakeOffice(
     calls,
     headless,
     characters: { has: (id: number) => ids.has(id) },
-    addAgent: (id, palette, hueShift, seatId, skipSpawnEffect, folderName) => {
+    addAgent: (
+      id,
+      palette,
+      hueShift,
+      seatId,
+      skipSpawnEffect,
+      folderName,
+      _nearAgentId,
+      displayName,
+    ) => {
       ids.add(id);
-      calls.push({ id, palette, hueShift, seatId, skipSpawnEffect, folderName });
+      const call: AddAgentCall = { id, palette, hueShift, seatId, skipSpawnEffect, folderName };
+      if (displayName !== undefined) call.displayName = displayName;
+      calls.push(call);
     },
     setHeadless: (id, isHeadless) => {
       if (isHeadless) headless.push(id);
@@ -102,6 +114,24 @@ test('layout not ready: buffers restored agents for the later layoutLoaded flush
   assert.deepEqual(pending, [
     { id: 5, palette: 2, hueShift: 90, seatId: 'seat-a', folderName: 'alpha', isHeadless: false },
   ]);
+});
+
+test('restores the deterministic display name through the pending path', () => {
+  const os = fakeOffice();
+  const pending: PendingAgent[] = [];
+
+  reconcileExistingAgents(
+    os,
+    [5],
+    {},
+    { 5: 'pixel-agents' },
+    false,
+    pending,
+    {},
+    { 5: 'AveryPixelagents' },
+  );
+
+  assert.equal(pending[0]?.displayName, 'AveryPixelagents');
 });
 
 // ── idempotence / dedup ─────────────────────────────────────────

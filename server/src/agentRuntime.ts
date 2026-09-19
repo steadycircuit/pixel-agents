@@ -13,8 +13,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import type { HookProvider } from '../../core/src/provider.js';
+import { getAgentDisplayName } from './agentNames.js';
 import type { AgentStateStore } from './agentStateStore.js';
-import { DEFAULT_MAX_CONTEXT_TOKENS } from './constants.js';
+import { readConfig } from './configPersistence.js';
+import { DEFAULT_MAX_CONTEXT_TOKENS, GLOBAL_SCAN_ACTIVE_MAX_AGE_MS } from './constants.js';
 import { DismissalTracker } from './dismissalTracker.js';
 import {
   adoptExternalSessionFromHook,
@@ -73,6 +75,9 @@ export class AgentRuntime {
   readonly activeAgentId = { current: null as number | null };
   private externalScanTimer: ReturnType<typeof setInterval> | null = null;
   private staleCheckTimer: ReturnType<typeof setInterval> | null = null;
+  /** Codex `exec resume` is a one-shot turn; keep its character visible after
+   * the process emits SessionEnd. */
+  private readonly retainAfterSessionEnd = new Set<string>();
 
   // Configuration refs (mutable, shared with scanners)
   readonly watchAllSessions = { current: false };
@@ -87,9 +92,10 @@ export class AgentRuntime {
 
   constructor(
     private readonly store: AgentStateStore,
-    provider: HookProvider,
+    private readonly provider: HookProvider,
   ) {
     // Wire module-level dependencies
+    this.dismissalTracker.loadDismissedSessions(readConfig().dismissedSessionIds);
     setDismissalTracker(this.dismissalTracker);
     setHookProvider(provider);
     setFileWatcherHookProvider(provider);
@@ -265,6 +271,16 @@ export class AgentRuntime {
       onSessionEnd: (agentId) => {
         const agent = this.store.get(agentId);
         if (!agent) return;
+        if (this.retainAfterSessionEnd.delete(agent.sessionId)) {
+          this.dismissalTracker.clearDismissal(agent.jsonlFile);
+          agent.isWaiting = true;
+          agent.pendingClear = false;
+          this.store.persist();
+          console.log(
+            `[Pixel Agents] Retaining ${getAgentDisplayName(agent.sessionId, agent.folderName)} as an idle re-employed agent after one-shot completion`,
+          );
+          return;
+        }
         this.dismissalTracker.clearSeededMtime(agent.jsonlFile);
         this.dismissalTracker.dismiss(agent.jsonlFile);
         // Covers real team leads AND leads of background teammates (which
@@ -283,6 +299,10 @@ export class AgentRuntime {
   /** Register adapter-specific lifecycle callbacks. */
   setLifecycleCallbacks(callbacks: RuntimeLifecycleCallbacks): void {
     this.lifecycleCallbacks = callbacks;
+  }
+
+  retainSessionAfterOneShot(sessionId: string): void {
+    this.retainAfterSessionEnd.add(sessionId);
   }
 
   // ── Hook event routing ──
@@ -472,10 +492,27 @@ export class AgentRuntime {
       // is live. Restoring them directly would resurrect immortal characters
       // (also skips stale entries written by older builds that persisted them).
       if (p.leadAgentId !== undefined && !p.teamName) continue;
+      const persistedSessionId = p.sessionId || path.basename(p.jsonlFile, '.jsonl');
+      if (this.dismissalTracker.isSessionDismissed(persistedSessionId)) continue;
       try {
         if (!fs.existsSync(p.jsonlFile)) continue;
       } catch {
         continue;
+      }
+      const isGlobalSession = (this.provider.getAllSessionRoots?.() ?? []).some((root) => {
+        const relative = path.relative(path.resolve(root), path.resolve(p.jsonlFile));
+        return (
+          relative === '' ||
+          (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+        );
+      });
+      if (isGlobalSession) {
+        try {
+          if (Date.now() - fs.statSync(p.jsonlFile).mtimeMs > GLOBAL_SCAN_ACTIVE_MAX_AGE_MS)
+            continue;
+        } catch {
+          continue;
+        }
       }
       if (this.store.has(p.id)) {
         this.knownJsonlFiles.add(p.jsonlFile);
@@ -485,9 +522,10 @@ export class AgentRuntime {
 
       const agent: AgentState = {
         id: p.id,
-        sessionId: p.sessionId || path.basename(p.jsonlFile, '.jsonl'),
+        sessionId: persistedSessionId,
         terminalRef: undefined,
         isExternal: true,
+        isGlobalSession: isGlobalSession || undefined,
         projectDir: p.projectDir,
         jsonlFile: p.jsonlFile,
         fileOffset: 0,

@@ -167,6 +167,8 @@ export interface OfficeLayout {
 
 export interface Character {
   id: number;
+  /** Deterministic human-readable name assigned by the host. */
+  displayName?: string;
   state: CharacterState;
   dir: Direction;
   /** Pixel position */

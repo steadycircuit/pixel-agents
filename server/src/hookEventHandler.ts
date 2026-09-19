@@ -1,6 +1,7 @@
 import * as path from 'path';
 
 import type { AgentEvent, HookProvider } from '../../core/src/provider.js';
+import { getAgentDisplayName } from './agentNames.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { SESSION_END_GRACE_MS } from './constants.js';
 import type { SessionRouter } from './sessionRouter.js';
@@ -10,6 +11,10 @@ import { notifyBackgroundAgentCompleted } from './transcriptParser.js';
 import type { AgentState } from './types.js';
 
 const debug = process.env.PIXEL_AGENTS_DEBUG !== '0';
+
+function agentLabel(agent: AgentState): string {
+  return getAgentDisplayName(agent.sessionId, agent.folderName);
+}
 
 /** Normalized hook event received from any provider's hook script via the HTTP server. */
 export interface HookEvent {
@@ -208,7 +213,7 @@ export class HookEventHandler {
           }
           if (debug)
             console.log(
-              `[Pixel Agents] Hook: Agent ${id} - SessionStart(source=${source}) auto-discovered`,
+              `[Pixel Agents] Hook: ${agentLabel(agent)} - SessionStart(source=${source}) auto-discovered`,
             );
           return;
         }
@@ -229,7 +234,7 @@ export class HookEventHandler {
             if (isMatch) {
               agent.pendingClear = false;
               console.log(
-                `[Pixel Agents] Hook: Agent ${id} - /${normEvent.source} detected, reassigning to ${event.session_id}`,
+                `[Pixel Agents] Hook: ${agentLabel(agent)} - /${normEvent.source} detected, reassigning to ${event.session_id}`,
               );
               this.sessionRouter.unregister(agent.sessionId);
               this.registerAgent(event.session_id, id);
@@ -330,7 +335,7 @@ export class HookEventHandler {
     agent.hookDelivered = true;
     if (debug)
       console.log(
-        `[Pixel Agents] Hook: Agent ${agentId} - ${eventName} (session=${event.session_id.slice(0, 8)}...)`,
+        `[Pixel Agents] Hook: ${agentLabel(agent)} - ${eventName} (session=${event.session_id.slice(0, 8)}...)`,
       );
 
     // Dispatch on normalized AgentEvent.kind, not raw hook event names.
@@ -386,7 +391,7 @@ export class HookEventHandler {
     const reason = normEvent.reason;
     if (debug)
       console.log(
-        `[Pixel Agents] Hook: Agent ${agentId} - SessionEnd(reason=${reason ?? 'unknown'})`,
+        `[Pixel Agents] Hook: ${agentLabel(agent)} - SessionEnd(reason=${reason ?? 'unknown'})`,
       );
 
     // /clear and /resume send SessionEnd then SessionStart. Wait briefly for the follow-up.
@@ -398,7 +403,7 @@ export class HookEventHandler {
       this.markAgentWaiting(agent, agentId);
       if (debug)
         console.log(
-          `[Pixel Agents] Hook: Agent ${agentId} - SessionEnd(reason=${reason}), awaiting possible SessionStart`,
+          `[Pixel Agents] Hook: ${agentLabel(agent)} - SessionEnd(reason=${reason}), awaiting possible SessionStart`,
         );
       // Safety net: if SessionStart never arrives, clean up the zombie agent
       setTimeout(() => {
@@ -518,7 +523,7 @@ export class HookEventHandler {
     if (this.provider.team && agent.currentHookIsTeammateSpawn === true && agent.teamName) {
       if (debug)
         console.log(
-          `[Pixel Agents] Hook: Agent ${agentId} - SubagentStart: teammate "${agentType}" detected, triggering discovery`,
+          `[Pixel Agents] Hook: ${agentLabel(agent)} - SubagentStart: teammate "${agentType}" detected, triggering discovery`,
         );
       this.lifecycleCallbacks.onTeammateDetected?.(agentId, event.session_id, agentType);
       return;
@@ -585,7 +590,7 @@ export class HookEventHandler {
     if (inlineTeammates.length > 0) {
       if (debug)
         console.log(
-          `[Pixel Agents] Hook: Agent ${agentId} - SubagentStop: marking inline teammates as waiting`,
+          `[Pixel Agents] Hook: ${agentLabel(agent)} - SubagentStop: marking inline teammates as waiting`,
         );
       for (const [id, a] of inlineTeammates) {
         this.markAgentWaiting(a, id);
@@ -696,6 +701,7 @@ export class HookEventHandler {
    * Routes to the specific teammate when identifiable, marking it waiting instantly.
    */
   private handleTaskCompleted(event: HookEvent, agentId: number): void {
+    const agent = this.agents.get(agentId);
     const taskSubject =
       typeof event.task_subject === 'string'
         ? event.task_subject
@@ -705,7 +711,7 @@ export class HookEventHandler {
     const teammateName = this.provider.team?.extractTeammateNameFromEvent(event);
     if (debug)
       console.log(
-        `[Pixel Agents] Hook: Agent ${agentId} - TaskCompleted: ${taskSubject}${teammateName ? ` (teammate_name=${teammateName})` : ''}`,
+        `[Pixel Agents] Hook: ${agent ? agentLabel(agent) : `agent ${agentId}`} - TaskCompleted: ${taskSubject}${teammateName ? ` (teammate_name=${teammateName})` : ''}`,
       );
 
     const inlineTeammates = getInlineTeammates(agentId, this.agents);

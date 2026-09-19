@@ -102,6 +102,11 @@ npm install --global pixel-agents
 pixel-agents
 ```
 
+When the active provider is Codex, the standalone server also discovers recent
+sessions already present under `~/.codex/sessions/`, including sessions created
+before Pixel Agents started. Each discovered session appears as a character and
+can be continued from the conversation drawer in the browser UI.
+
 Use a fixed address or port when needed:
 
 ```bash

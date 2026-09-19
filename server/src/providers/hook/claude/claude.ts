@@ -102,11 +102,22 @@ function getSessionDirs(workspacePath: string): string[] {
 function buildLaunchCommand(
   sessionId: string,
   cwd: string,
-  opts?: { bypassPermissions?: boolean },
+  opts?: { bypassPermissions?: boolean; initialPrompt?: string },
 ): { command: string; args: string[]; env?: Record<string, string> } {
+  if (opts?.initialPrompt) {
+    const args = ['--print', '--session-id', sessionId, opts.initialPrompt];
+    if (opts.bypassPermissions) args.splice(1, 0, '--dangerously-skip-permissions');
+    return { command: 'claude', args, env: { PWD: cwd } };
+  }
   const args = ['--session-id', sessionId];
   if (opts?.bypassPermissions) args.push('--dangerously-skip-permissions');
   return { command: 'claude', args, env: { PWD: cwd } };
+}
+
+function buildPromptCommand(sessionId: string, cwd: string, prompt: string) {
+  // Field Notes launches this detached, so use Claude's print mode rather than
+  // starting a second interactive terminal UI.
+  return { command: 'claude', args: ['--resume', sessionId, '--print', prompt], env: { PWD: cwd } };
 }
 
 /** Root that holds every Claude session across all workspaces. Used by the
@@ -316,6 +327,7 @@ export const claudeProvider: HookProvider = {
   getAllSessionRoots,
   sessionFilePattern: '*.jsonl',
   buildLaunchCommand,
+  buildPromptCommand,
 
   team: claudeTeamProvider,
 };

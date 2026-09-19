@@ -25,6 +25,7 @@ interface DebugViewProps {
   subagentTools: Record<number, Record<string, ToolActivity[]>>;
   officeState: OfficeState;
   onSelectAgent: (id: number) => void;
+  displayNames?: Record<number, string>;
 }
 
 function ToolDot({ tool }: { tool: ToolActivity }) {
@@ -68,6 +69,7 @@ export function DebugView({
   subagentTools,
   officeState,
   onSelectAgent,
+  displayNames = {},
 }: DebugViewProps) {
   const [diagnostics, setDiagnostics] = useState<Record<number, AgentDiagnostics>>({});
 
@@ -113,7 +115,7 @@ export function DebugView({
           <span
             className={`rounded-none py-6 px-10 text-xl ${isSelected ? 'text-white font-bold' : ''}`}
           >
-            Agent #{id}
+            {displayNames[id] ?? `Agent #${id}`}
           </span>
           <Button
             variant="ghost"

@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import type { StateAdapter } from '../../core/src/adapter.js';
 import type { HookProvider } from '../../core/src/provider.js';
 import { buildAgentDiagnostics } from '../../server/src/agentDiagnostics.js';
+import { getAgentDisplayName } from '../../server/src/agentNames.js';
 import { AgentRuntime } from '../../server/src/agentRuntime.js';
 import { AgentStateStore } from '../../server/src/agentStateStore.js';
 import type {
@@ -26,6 +27,7 @@ import {
   sendWallTilesToWebview,
 } from '../../server/src/assetLoader.js';
 import { loadAllCharacters, loadAllFurniture, loadAllPets } from '../../server/src/assetReload.js';
+import { recordDismissedSession } from '../../server/src/configPersistence.js';
 import {
   getHooksConsent,
   getHooksEnabled,
@@ -125,6 +127,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       this.sendOrBuffer({
         type: 'agentCreated',
         id,
+        displayName: getAgentDisplayName(agent.sessionId, agent.folderName),
         folderName: agent.folderName,
         isExternal: agent.isExternal || undefined,
         isTeammate: agent.leadAgentId !== undefined || undefined,
@@ -462,6 +465,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       } else if (message.type === 'closeAgent') {
         const agent = this.store.get(message.id);
         if (agent) {
+          this.runtime.dismissalTracker.dismissSession(agent.sessionId);
+          recordDismissedSession(agent.sessionId);
           if (agent.terminalRef) {
             agent.terminalRef.dispose();
           } else {

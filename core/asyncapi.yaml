@@ -116,8 +116,10 @@ components:
         - $ref: '#/components/schemas/ExternalAssetDirectoriesUpdated'
         - $ref: '#/components/schemas/AreaMappingsLoaded'
         - $ref: '#/components/schemas/WorkspaceFolders'
+        - $ref: '#/components/schemas/PreviousSessions'
         # Diagnostics
         - $ref: '#/components/schemas/AgentDiagnostics'
+        - $ref: '#/components/schemas/AgentConversation'
       discriminator: type
 
     ClientMessage:
@@ -144,6 +146,8 @@ components:
         - $ref: '#/components/schemas/SaveAreaMappings'
         - $ref: '#/components/schemas/SetShowAreas'
         - $ref: '#/components/schemas/RequestDiagnostics'
+        - $ref: '#/components/schemas/RequestAgentConversation'
+        - $ref: '#/components/schemas/SendAgentPrompt'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -188,6 +192,8 @@ components:
           const: agentCreated
         id:
           type: integer
+        displayName:
+          type: string
         folderName:
           type: string
         isExternal:
@@ -250,6 +256,11 @@ components:
           description: Map of agent ID (string) to external flag.
           additionalProperties:
             type: boolean
+        displayNames:
+          type: object
+          description: Map of agent ID (string) to deterministic display name.
+          additionalProperties:
+            type: string
 
     AgentStatus:
       description: Active vs waiting state for an agent (drives character animation).
@@ -768,7 +779,7 @@ components:
             type: string
 
     WorkspaceFolders:
-      description: Multi-root workspace folders (VS Code only).
+      description: Folders available for launching agents.
       type: object
       additionalProperties: false
       required: [type, folders]
@@ -779,6 +790,35 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkspaceFolder'
+
+    PreviousSessions:
+      description: Inactive provider sessions available to re-employ from the standalone web UI.
+      type: object
+      additionalProperties: false
+      required: [type, sessions]
+      properties:
+        type:
+          const: previousSessions
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PreviousSession'
+
+    PreviousSession:
+      type: object
+      additionalProperties: false
+      required: [sessionId, displayName, folderName, folderPath, lastActivity]
+      properties:
+        sessionId:
+          type: string
+        displayName:
+          type: string
+        folderName:
+          type: string
+        folderPath:
+          type: string
+        lastActivity:
+          type: string
 
     AgentDiagnostics:
       description: Connection diagnostics for all agents (response to requestDiagnostics).
@@ -793,6 +833,31 @@ components:
           description: Per-agent diagnostic info; shape opaque to the protocol.
           items:
             type: object
+
+    AgentConversation:
+      description: Recent user and assistant messages from an agent transcript.
+      type: object
+      additionalProperties: false
+      required: [type, id, messages]
+      properties:
+        type:
+          const: agentConversation
+        id:
+          type: integer
+        messages:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [role, text]
+            properties:
+              role:
+                type: string
+                enum: [user, assistant]
+              text:
+                type: string
+              timestamp:
+                type: string
 
     # ── Client message variants ────────────────────────────────────
 
@@ -813,6 +878,8 @@ components:
       properties:
         type:
           const: launchAgent
+        sessionId:
+          type: string
         folderPath:
           type: string
           description: Workspace folder path (for multi-root workspaces).
@@ -1071,6 +1138,30 @@ components:
       properties:
         type:
           const: requestDiagnostics
+
+    RequestAgentConversation:
+      description: Request recent conversation messages for an agent.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: requestAgentConversation
+        id:
+          type: integer
+
+    SendAgentPrompt:
+      description: Resume an agent session with a follow-up prompt.
+      type: object
+      additionalProperties: false
+      required: [type, id, prompt]
+      properties:
+        type:
+          const: sendAgentPrompt
+        id:
+          type: integer
+        prompt:
+          type: string
 
     # ── Supporting schemas ─────────────────────────────────────────
 

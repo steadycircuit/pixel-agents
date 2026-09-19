@@ -53,6 +53,8 @@ export interface PixelAgentsConfig {
   /** Per-provider hooks preference, machine-global for the same reason as the
    *  consent above. A provider absent from the map takes the default (true). */
   hooksEnabled: Record<string, boolean>;
+  /** Session IDs explicitly closed by the user; excluded from automatic discovery. */
+  dismissedSessionIds: string[];
 }
 
 const DEFAULT_ADAPTER_SETTINGS: AdapterSettings = {
@@ -89,6 +91,12 @@ function parseHooksEnabled(raw: unknown): Record<string, boolean> {
     if (typeof enabled === 'boolean') out[providerId] = enabled;
   }
   return out;
+}
+
+function parseDismissedSessionIds(raw: unknown): string[] {
+  return Array.isArray(raw)
+    ? raw.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : [];
 }
 
 /**
@@ -158,6 +166,7 @@ export function readConfig(): PixelAgentsConfig {
         externalAssetDirectories: [],
         hooksConsent: {},
         hooksEnabled: {},
+        dismissedSessionIds: [],
       };
     }
     const raw = fs.readFileSync(filePath, 'utf-8');
@@ -170,6 +179,7 @@ export function readConfig(): PixelAgentsConfig {
         : [],
       hooksConsent: parseHooksConsent(parsed.hooksConsent),
       hooksEnabled: parseHooksEnabled(parsed.hooksEnabled),
+      dismissedSessionIds: parseDismissedSessionIds(parsed.dismissedSessionIds),
     };
   } catch (err) {
     console.error('[Pixel Agents] Failed to read config file:', err);
@@ -178,8 +188,27 @@ export function readConfig(): PixelAgentsConfig {
       standalone: { ...DEFAULT_ADAPTER_SETTINGS },
       externalAssetDirectories: [],
       hooksConsent: {},
+      dismissedSessionIds: [],
       hooksEnabled: {},
     };
+  }
+}
+
+export function recordDismissedSession(sessionId: string): void {
+  if (!sessionId) return;
+  const cfg = readConfig();
+  if (!cfg.dismissedSessionIds.includes(sessionId)) {
+    cfg.dismissedSessionIds.push(sessionId);
+    writeConfig(cfg);
+  }
+}
+
+export function clearDismissedSession(sessionId: string): void {
+  const cfg = readConfig();
+  const next = cfg.dismissedSessionIds.filter((id) => id !== sessionId);
+  if (next.length !== cfg.dismissedSessionIds.length) {
+    cfg.dismissedSessionIds = next;
+    writeConfig(cfg);
   }
 }
 

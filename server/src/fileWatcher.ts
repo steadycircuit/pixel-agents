@@ -1081,6 +1081,7 @@ export function adoptExternalSessionFromHook(
     // and seeded files at startup are in knownJsonlFiles but may become active later.
     if (dismissalTracker!.isDismissed(transcriptPath)) return;
     if (dismissalTracker!.isPermanentlyDismissed(transcriptPath)) return;
+    if (dismissalTracker!.isSessionDismissed(sessionId)) return;
 
     knownJsonlFiles.add(transcriptPath);
     const projectDir = path.dirname(transcriptPath);
@@ -1167,6 +1168,8 @@ function adoptExternalSession(
 
   persistAgents: () => void,
   folderName?: string,
+  sessionId?: string,
+  isGlobalSession = false,
 ): void {
   const id = nextAgentIdRef.current++;
   // Decide whether to replay the existing file content or skip to its end.
@@ -1200,9 +1203,10 @@ function adoptExternalSession(
   }
   const agent: AgentState = {
     id,
-    sessionId: path.basename(jsonlFile, '.jsonl'),
+    sessionId: sessionId ?? path.basename(jsonlFile, '.jsonl'),
     terminalRef: undefined,
     isExternal: true,
+    isGlobalSession: isGlobalSession || undefined,
     projectDir,
     jsonlFile,
     fileOffset,
@@ -1263,7 +1267,7 @@ export function startExternalSessionScanning(
   watchAllSessionsRef?: { current: boolean },
   hooksEnabledRef?: { current: boolean },
 ): ReturnType<typeof setInterval> {
-  return setInterval(() => {
+  const scan = (): void => {
     // Scan all tracked project dirs in both hooks and heuristic modes. Hooks are
     // a fast path for producers that emit hook events; polling remains the
     // discovery path for workspace JSONL sessions created without hooks.
@@ -1282,7 +1286,10 @@ export function startExternalSessionScanning(
       );
     }
     // If "Watch All Sessions" is ON, also scan all global project dirs
-    if (watchAllSessionsRef?.current) {
+    // Codex owns a single global, date-partitioned session store. In standalone
+    // Codex mode, discovering that store is the default so opening Pixel Agents
+    // immediately materializes sessions that were already running.
+    if (watchAllSessionsRef?.current || hookProvider?.id === 'codex') {
       scanGlobalProjectDirs(
         knownJsonlFiles,
         nextAgentIdRef,
@@ -1294,7 +1301,13 @@ export function startExternalSessionScanning(
         persistAgents,
       );
     }
-  }, EXTERNAL_SCAN_INTERVAL_MS);
+  };
+
+  // Discover existing sessions before the first browser handshake. A
+  // timer-only scan could make an idle session appear only after its next
+  // prompt updated the transcript.
+  scan();
+  return setInterval(scan, EXTERNAL_SCAN_INTERVAL_MS);
 }
 
 /** Scan a single project dir for external sessions. */
@@ -1376,6 +1389,9 @@ export function scanExternalDir(
 
     // Skip files permanently dismissed by /clear (never re-adopted)
     if (dismissalTracker!.isPermanentlyDismissed(file)) continue;
+
+    // Manual close is durable by session ID, so restart does not resurrect it.
+    if (dismissalTracker!.isSessionDismissed(path.basename(file, '.jsonl'))) continue;
 
     // Skip files recently dismissed by the user (closed via X).
     // isDismissed() handles the 3-minute cooldown and auto-expires old entries.
@@ -1487,72 +1503,71 @@ function scanGlobalProjectDirs(
   const roots = hookProvider?.getAllSessionRoots?.() ?? [];
   if (roots.length === 0) return;
 
-  const projectDirs: string[] = [];
-  for (const root of roots) {
+  // Providers may nest sessions below date/project directories (Codex uses
+  // ~/.codex/sessions/YYYY/MM/DD). Walk the complete provider-owned tree so
+  // startup discovery can find sessions that predate Pixel Agents.
+  const sessionFiles: string[] = [];
+  const visit = (dir: string): void => {
+    let entries: fs.Dirent[];
     try {
-      const entries = fs.readdirSync(root, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) projectDirs.push(path.join(root, entry.name));
-      }
+      entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch {
-      // root missing / unreadable -> skip
+      return;
     }
-  }
+    for (const entry of entries) {
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) visit(entryPath);
+      else if (entry.isFile() && entry.name.endsWith('.jsonl')) sessionFiles.push(entryPath);
+    }
+  };
+  for (const root of roots) visit(root);
 
   const now = Date.now();
-  for (const dirPath of projectDirs) {
-    // Skip directories already tracked by workspace scanning
-    if (isTrackedProjectDir(dirPath)) continue;
+  for (const file of sessionFiles) {
+    if (knownJsonlFiles.has(file)) continue;
+    let tracked = false;
+    for (const agent of agents.values()) {
+      if (pathsMatch(agent.jsonlFile, file)) {
+        tracked = true;
+        break;
+      }
+    }
+    if (tracked) continue;
+    const info = hookProvider?.getSessionInfo?.(file) ?? {};
+    if (info.sessionId && dismissalTracker!.isSessionDismissed(info.sessionId)) continue;
+    const projectDir = info.cwd ?? path.dirname(file);
+    if (isTrackedProjectDir(projectDir)) continue;
 
-    let files: string[];
+    // A metadata-bearing Codex session can be small while waiting for input.
     try {
-      files = fs
-        .readdirSync(dirPath)
-        .filter((f) => f.endsWith('.jsonl'))
-        .map((f) => path.join(dirPath, f));
+      const stat = fs.statSync(file);
+      if (stat.size < GLOBAL_SCAN_ACTIVE_MIN_SIZE && !info.sessionId) continue;
+      if (now - stat.mtimeMs > GLOBAL_SCAN_ACTIVE_MAX_AGE_MS) continue;
     } catch {
       continue;
     }
 
-    for (const file of files) {
-      if (knownJsonlFiles.has(file)) continue;
-      let tracked = false;
-      for (const agent of agents.values()) {
-        if (pathsMatch(agent.jsonlFile, file)) {
-          tracked = true;
-          break;
-        }
-      }
-      if (tracked) continue;
-      // Activity filter: >3KB AND modified within 10 minutes
-      try {
-        const stat = fs.statSync(file);
-        if (stat.size < GLOBAL_SCAN_ACTIVE_MIN_SIZE) continue;
-        if (now - stat.mtimeMs > GLOBAL_SCAN_ACTIVE_MAX_AGE_MS) continue;
-      } catch {
-        continue;
-      }
-
-      const folderName =
-        folderNameResolver?.({ projectDir: dirPath }) ??
-        folderNameFromProjectDir(path.basename(dirPath));
-      knownJsonlFiles.add(file);
-      console.log(
-        `[Pixel Agents] Watcher: detected global session ${path.basename(file)} (${folderName})`,
-      );
-      adoptExternalSession(
-        file,
-        dirPath,
-        nextAgentIdRef,
-        agents,
-        fileWatchers,
-        pollingTimers,
-        waitingTimers,
-        permissionTimers,
-        persistAgents,
-        folderName,
-      );
-    }
+    const folderName =
+      folderNameResolver?.({ cwd: info.cwd, projectDir }) ??
+      folderNameFromProjectDir(path.basename(projectDir));
+    knownJsonlFiles.add(file);
+    console.log(
+      `[Pixel Agents] Watcher: detected global session ${path.basename(file)} (${folderName})`,
+    );
+    adoptExternalSession(
+      file,
+      projectDir,
+      nextAgentIdRef,
+      agents,
+      fileWatchers,
+      pollingTimers,
+      waitingTimers,
+      permissionTimers,
+      persistAgents,
+      folderName,
+      info.sessionId,
+      true,
+    );
   }
 }
 
@@ -1573,12 +1588,11 @@ export function startStaleExternalAgentCheck(
     for (const [id, agent] of agents) {
       if (!agent.isExternal) continue;
 
-      // Only despawn if the JSONL file has been deleted from disk.
-      // Inactive external agents stay alive so they can resume when
-      // the session continues (e.g., claude --resume).
       try {
-        fs.statSync(agent.jsonlFile);
-        // File still exists — keep the agent alive regardless of mtime
+        const stat = fs.statSync(agent.jsonlFile);
+        if (agent.isGlobalSession && Date.now() - stat.mtimeMs > GLOBAL_SCAN_ACTIVE_MAX_AGE_MS) {
+          toRemove.push(id);
+        }
       } catch {
         // File deleted — remove agent
         toRemove.push(id);

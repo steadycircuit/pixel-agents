@@ -19,6 +19,7 @@ export class DismissalTracker {
 
   /** Files permanently dismissed by /clear reassignment. Never re-adopted in this session. */
   private permanent = new Set<string>();
+  private dismissedSessions = new Set<string>();
 
   /** Mtime at seeding time (extension startup). If the actual mtime changes later,
    *  the file was resumed (--resume) and should be released from tracking. */
@@ -64,6 +65,22 @@ export class DismissalTracker {
     return this.permanent.has(toPathKey(path));
   }
 
+  loadDismissedSessions(sessionIds: string[]): void {
+    this.dismissedSessions = new Set(sessionIds);
+  }
+
+  dismissSession(sessionId: string): void {
+    if (sessionId) this.dismissedSessions.add(sessionId);
+  }
+
+  clearSessionDismissal(sessionId: string): void {
+    this.dismissedSessions.delete(sessionId);
+  }
+
+  isSessionDismissed(sessionId: string): boolean {
+    return this.dismissedSessions.has(sessionId);
+  }
+
   // ── Seeded mtimes (startup snapshot for --resume detection) ─────────
 
   seedMtime(path: string, mtime: number): void {
@@ -101,6 +118,7 @@ export class DismissalTracker {
   resetAll(): void {
     this.dismissed.clear();
     this.permanent.clear();
+    this.dismissedSessions.clear();
     this.seeded.clear();
     this.pending.clear();
   }

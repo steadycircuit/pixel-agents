@@ -1,17 +1,26 @@
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
 import type { HookProvider } from '../../core/src/provider.js';
 import { resendAgentActivity } from './agentActivityResend.js';
 import { buildAgentDiagnostics } from './agentDiagnostics.js';
+import { getAgentDisplayName } from './agentNames.js';
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import type { LoadedAssets, LoadedCharacterSprites, LoadedPetSprites } from './assetLoader.js';
 import {
+  clearDismissedSession,
   getHooksConsent,
   getHooksEnabled,
   readConfig,
+  recordDismissedSession,
   setHooksEnabled,
   writeConfig,
 } from './configPersistence.js';
 import { HUE_SHIFT_MAX_DEG, PALETTE_COUNT } from './constants.js';
+import { readConversation } from './conversation.js';
 import { readLayoutFromFile, writeLayoutToFile } from './layoutPersistence.js';
 import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
@@ -19,6 +28,96 @@ import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { activeProvider, hookProviderById, hookProviders } from './providers/index.js';
 
 type WsSend = (message: Record<string, unknown>) => void;
+
+function findPreviousSessions(store: AgentStateStore): Array<{
+  sessionId: string;
+  displayName: string;
+  folderName: string;
+  folderPath: string;
+  lastActivity: string;
+}> {
+  const roots = activeProvider.getAllSessionRoots?.() ?? [];
+  const activeFiles = new Set([...store.values()].map((agent) => path.resolve(agent.jsonlFile)));
+  const activeSessionIds = new Set([...store.values()].map((agent) => agent.sessionId));
+  const files: string[] = [];
+  const visit = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) visit(entryPath);
+      else if (entry.isFile() && entry.name.endsWith('.jsonl')) files.push(entryPath);
+    }
+  };
+  for (const root of roots) visit(root);
+
+  const now = Date.now();
+  return files
+    .flatMap((file) => {
+      if (activeFiles.has(path.resolve(file))) return [];
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(file);
+      } catch {
+        return [];
+      }
+      if (now - stat.mtimeMs <= 600_000 || stat.size < 3_072) return [];
+      const info = activeProvider.getSessionInfo?.(file) ?? {};
+      const sessionId = info.sessionId ?? path.basename(file, '.jsonl');
+      if (!sessionId || activeSessionIds.has(sessionId)) return [];
+      if (activeProvider.isSessionActive?.(sessionId)) return [];
+      const folderPath = info.cwd ?? path.dirname(file);
+      const folderName = path.basename(folderPath) || folderPath;
+      return [
+        {
+          sessionId,
+          displayName: getAgentDisplayName(sessionId, folderName),
+          folderName,
+          folderPath,
+          lastActivity: new Date(stat.mtimeMs).toISOString(),
+        },
+      ];
+    })
+    .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity))
+    .slice(0, 100);
+}
+
+function launchDetached(
+  command: { command: string; args: string[]; env?: Record<string, string> },
+  cwd: string,
+  label: string,
+): ReturnType<typeof spawn> {
+  const child = spawn(command.command, command.args, {
+    cwd,
+    env: { ...process.env, ...command.env },
+    // Keep stderr long enough to explain failed launches. stdout is the
+    // provider's response stream and is intentionally not surfaced here.
+    stdio: ['ignore', 'ignore', 'pipe'],
+    detached: true,
+  });
+  child.stderr?.on('data', (chunk: Buffer | string) => {
+    const message = String(chunk).trim();
+    if (message) console.error(`[Pixel Agents] ${label} stderr: ${message}`);
+  });
+  child.on('error', (err) => {
+    console.error(`[Pixel Agents] ${label} failed to start:`, err);
+  });
+  child.on('exit', (code, signal) => {
+    if (code !== 0 || signal) {
+      console.error(
+        `[Pixel Agents] ${label} exited before becoming active (code=${code ?? 'null'}, signal=${signal ?? 'none'})`,
+      );
+    } else {
+      console.log(`[Pixel Agents] ${label} completed`);
+    }
+  });
+  child.unref();
+  return child;
+}
 
 /** Async hook toggle side effect (install/uninstall + script copy). Provided by cli.ts. */
 export type SetHooksEnabledSideEffect = (
@@ -48,6 +147,8 @@ export interface ClientMessageContext {
   store: AgentStateStore;
   runtime?: AgentRuntime;
   cache: AssetCache | null;
+  /** True when this message channel belongs to the standalone browser server. */
+  standalone?: boolean;
   /** Install/uninstall hooks side effect. Needs server url+token known only to cli.ts. */
   onSetHooksEnabled?: SetHooksEnabledSideEffect;
   /** Reload assets after an external-asset-directory change. Needs the dist root, known only to cli.ts. */
@@ -87,6 +188,70 @@ export function handleClientMessage(
   const adapter = store.getAdapter();
 
   switch (msg.type) {
+    case 'launchAgent': {
+      if (!ctx.privileged) {
+        console.warn(
+          '[Pixel Agents] Ignoring launchAgent from an untokened client — open the tokened URL printed by the CLI.',
+        );
+        break;
+      }
+      const requestedPath = typeof msg.folderPath === 'string' ? msg.folderPath.trim() : '';
+      const cwd = requestedPath ? path.resolve(requestedPath) : process.cwd();
+      try {
+        if (!fs.statSync(cwd).isDirectory()) {
+          console.warn(`[Pixel Agents] Cannot launch agent: not a directory: ${cwd}`);
+          break;
+        }
+      } catch (err) {
+        console.warn(`[Pixel Agents] Cannot launch agent: folder is unavailable: ${cwd}`, err);
+        break;
+      }
+      const launch = activeProvider.buildLaunchCommand?.(randomUUID(), cwd, {
+        bypassPermissions: msg.bypassPermissions === true,
+        // Standalone has no terminal to host an interactive CLI. The first
+        // non-interactive turn creates the session that Field Notes can resume.
+        initialPrompt: 'Start in this folder and wait for my next instruction.',
+      });
+      const previousSessionId = typeof msg.sessionId === 'string' ? msg.sessionId : '';
+      if (previousSessionId && activeProvider.isSessionActive?.(previousSessionId)) {
+        console.warn(
+          `[Pixel Agents] Cannot re-employ ${previousSessionId}: the Codex session already has an active writer.`,
+        );
+        break;
+      }
+      const launchForSession =
+        previousSessionId && activeProvider.buildPromptCommand
+          ? activeProvider.buildPromptCommand(
+              previousSessionId,
+              cwd,
+              'You are being re-employed. Resume this work and wait for my next instruction.',
+            )
+          : launch;
+      if (!launchForSession) {
+        console.warn(
+          `[Pixel Agents] ${activeProvider.displayName} cannot resume sessions from the standalone UI.`,
+        );
+        break;
+      }
+      console.log(
+        `[Pixel Agents] Launching ${previousSessionId ? `re-employment for ${previousSessionId}` : 'new agent'} in ${cwd}`,
+      );
+      if (previousSessionId) runtime?.retainSessionAfterOneShot(previousSessionId);
+      launchDetached(
+        launchForSession,
+        cwd,
+        `${activeProvider.displayName} ${previousSessionId ? `re-employment for ${previousSessionId}` : 'agent'}`,
+      );
+      // A manually dismissed session is eligible for discovery again as soon
+      // as re-employment is requested. Do this after spawn so a bad folder or
+      // unsupported provider does not silently lose the dismissal record.
+      if (previousSessionId) {
+        runtime?.dismissalTracker.clearSessionDismissal(previousSessionId);
+        clearDismissedSession(previousSessionId);
+      }
+      break;
+    }
+
     case 'webviewReady':
       handleWebviewReady(send, ctx);
       break;
@@ -99,6 +264,8 @@ export function handleClientMessage(
       const id = msg.id as number;
       const agent = store.get(id);
       if (agent && runtime) {
+        runtime.dismissalTracker.dismissSession(agent.sessionId);
+        recordDismissedSession(agent.sessionId);
         runtime.dismissalTracker.dismiss(agent.jsonlFile);
         runtime.removeAgent(id);
       }
@@ -109,6 +276,36 @@ export function handleClientMessage(
       // Point-to-point reply to the requesting socket (NOT a broadcast).
       send({ type: 'agentDiagnostics', agents: buildAgentDiagnostics(store) });
       break;
+
+    case 'requestAgentConversation': {
+      const id = msg.id as number;
+      const agent = store.get(id);
+      if (agent)
+        send({ type: 'agentConversation', id, messages: readConversation(agent.jsonlFile) });
+      break;
+    }
+
+    case 'sendAgentPrompt': {
+      // Sending a prompt starts a local CLI process and can cause filesystem or
+      // network side effects, so require the tokened standalone URL just like
+      // hook installation. Untokened tabs remain read-only observers.
+      if (!ctx.privileged) break;
+      const id = msg.id as number;
+      const prompt = typeof msg.prompt === 'string' ? msg.prompt.trim() : '';
+      const agent = store.get(id);
+      const command = activeProvider.buildPromptCommand;
+      if (!agent || !prompt || prompt.length > 20_000 || !command) break;
+      const launch = command(agent.sessionId, agent.projectDir, prompt);
+      const child = spawn(launch.command, launch.args, {
+        cwd: agent.projectDir,
+        env: { ...process.env, ...launch.env },
+        stdio: 'ignore',
+        detached: true,
+      });
+      child.unref();
+      send({ type: 'agentConversation', id, messages: readConversation(agent.jsonlFile) });
+      break;
+    }
 
     case 'saveLayout':
       if (msg.layout) {
@@ -428,6 +625,25 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     showAreas,
   });
 
+  // Standalone has no VS Code workspace API. Offer the server directory and
+  // project directories already represented by agents as launch locations.
+  if (ctx.standalone) {
+    const folders = new Map<string, { name: string; path: string }>();
+    const addFolder = (folderPath: string) => {
+      const normalized = path.resolve(folderPath);
+      if (!folders.has(normalized)) {
+        folders.set(normalized, {
+          name: path.basename(normalized) || normalized,
+          path: normalized,
+        });
+      }
+    };
+    addFolder(process.cwd());
+    for (const agent of store.values()) addFolder(agent.projectDir);
+    send({ type: 'workspaceFolders', folders: [...folders.values()] });
+    send({ type: 'previousSessions', sessions: findPreviousSessions(store) });
+  }
+
   // 4a. Actual install state, distinct from the hooksEnabled preference —
   // hooksEnabled defaults true while first-run consent is still pending. The
   // provider checks are async, so these land as follow-ups right after the
@@ -485,6 +701,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   const agentIds: number[] = [];
   const folderNames: Record<number, string> = {};
   const externalAgents: Record<number, boolean> = {};
+  const displayNames: Record<number, string> = {};
   const persistedSeats = adapter?.loadSeats() ?? {};
   const agentMeta: Record<number, { palette?: number; hueShift?: number; seatId?: string }> = {};
   for (const [id, agent] of store) {
@@ -495,6 +712,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     if (agent.isExternal) {
       externalAgents[id] = true;
     }
+    displayNames[id] = getAgentDisplayName(agent.sessionId, agent.folderName);
     const persisted = persistedSeats[String(id)];
     agentMeta[id] = {
       palette: agent.palette,
@@ -508,6 +726,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     agentMeta,
     folderNames,
     externalAgents,
+    displayNames,
   });
 
   // 7. Layout last (see step 3): flushes the webview's buffered existingAgents

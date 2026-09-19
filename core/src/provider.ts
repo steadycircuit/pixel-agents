@@ -9,6 +9,11 @@
 
 import type { TeamProvider } from './teamProvider.js';
 
+export interface SessionInfo {
+  sessionId?: string;
+  cwd?: string;
+}
+
 // ── Normalized Events (all provider types produce these) ──────
 
 export type AgentEvent =
@@ -128,6 +133,10 @@ export interface HookProvider {
    *  Sessions". Each returned dir contains subdirs whose entries are session
    *  transcript files. Undefined = this provider doesn't support global scan. */
   getAllSessionRoots?(): string[];
+  /** Read provider metadata from a transcript discovered on disk. */
+  getSessionInfo?(transcriptPath: string): SessionInfo;
+  /** Return true when the provider has an active writer for a session. */
+  isSessionActive?(sessionId: string): boolean;
   /** Glob pattern for session files (e.g., '*.jsonl'). */
   readonly sessionFilePattern?: string;
   /** Parse one line of a transcript file into an AgentEvent. */
@@ -136,12 +145,18 @@ export interface HookProvider {
   buildLaunchCommand?(
     sessionId: string,
     cwd: string,
-    opts?: { bypassPermissions?: boolean },
+    opts?: { bypassPermissions?: boolean; initialPrompt?: string },
   ): {
     command: string;
     args: string[];
     env?: Record<string, string>;
   };
+  /** Build a command that continues an existing session with a user prompt. */
+  buildPromptCommand?(
+    sessionId: string,
+    cwd: string,
+    prompt: string,
+  ): { command: string; args: string[]; env?: Record<string, string> };
 
   // ── Optional team/subagent extension (Agent Teams on Claude; empty for single-agent CLIs) ──
 

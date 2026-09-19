@@ -4,6 +4,7 @@ import { toMajorMinor } from './changelogData.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
+import { ConversationDrawer } from './components/ConversationDrawer.js';
 import { DebugView } from './components/DebugView.js';
 import { EditActionBar } from './components/EditActionBar.js';
 import { IntroBubble } from './components/IntroBubble.js';
@@ -100,6 +101,8 @@ function App() {
     setAreaMappings,
     showAreas,
     setShowAreas,
+    conversations,
+    previousSessions,
   } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty);
 
   // Show migration notice once layout reset is detected
@@ -112,6 +115,7 @@ function App() {
   const [hooksTooltipDismissed, setHooksTooltipDismissed] = useState(false);
   const [isDebugMode, setIsDebugMode] = useState(false);
   const [alwaysShowOverlay, setAlwaysShowOverlay] = useState(false);
+  const [conversationAgentId, setConversationAgentId] = useState<number | null>(null);
 
   const currentMajorMinor = toMajorMinor(extensionVersion);
 
@@ -240,7 +244,11 @@ function App() {
     const os = getOfficeState();
     const meta = os.subagentMeta.get(agentId);
     const focusId = meta ? meta.parentAgentId : agentId;
-    transport.send({ type: 'focusAgent', id: focusId });
+    if (isBrowserRuntime) {
+      setConversationAgentId(focusId);
+    } else {
+      transport.send({ type: 'focusAgent', id: focusId });
+    }
   }, []);
 
   const officeState = getOfficeState();
@@ -355,6 +363,15 @@ function App() {
         activeAreaLabel={activeAreaLabel}
       />
 
+      {isBrowserRuntime && conversationAgentId !== null && (
+        <ConversationDrawer
+          agentId={conversationAgentId}
+          displayName={officeState.characters.get(conversationAgentId)?.displayName}
+          messages={conversations[conversationAgentId] ?? []}
+          onClose={() => setConversationAgentId(null)}
+        />
+      )}
+
       {!isDebugMode ? (
         <>
           <ZoomControls zoom={editor.zoom} onZoomChange={editor.handleZoomChange} />
@@ -450,6 +467,12 @@ function App() {
           subagentTools={subagentTools}
           officeState={officeState}
           onSelectAgent={handleSelectAgent}
+          displayNames={Object.fromEntries(
+            [...officeState.characters].map(([id, character]) => [
+              id,
+              character.displayName ?? `Agent #${id}`,
+            ]),
+          )}
         />
       )}
 
@@ -521,6 +544,7 @@ function App() {
         isSettingsOpen={isSettingsOpen}
         onToggleSettings={() => setIsSettingsOpen((v) => !v)}
         workspaceFolders={workspaceFolders}
+        previousSessions={previousSessions}
       />
 
       <VersionIndicator

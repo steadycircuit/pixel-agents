@@ -7,6 +7,8 @@ export interface AgentState {
   terminalRef?: vscode.Terminal;
   /** Whether this agent was detected from an external source (VS Code extension panel, etc.) */
   isExternal: boolean;
+  /** True when adopted by the global session scan; these are removed when inactive. */
+  isGlobalSession?: boolean;
   projectDir: string;
   jsonlFile: string;
   fileOffset: number;

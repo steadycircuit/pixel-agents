@@ -38,7 +38,9 @@ export type ServerMessage =
   | ExternalAssetDirectoriesUpdated
   | AreaMappingsLoaded
   | WorkspaceFolders
-  | AgentDiagnostics;
+  | PreviousSessions
+  | AgentDiagnostics
+  | AgentConversation;
 
 export type ClientMessage =
   | WebviewReady
@@ -62,7 +64,9 @@ export type ClientMessage =
   | RemoveExternalAssetDirectory
   | SaveAreaMappings
   | SetShowAreas
-  | RequestDiagnostics;
+  | RequestDiagnostics
+  | RequestAgentConversation
+  | SendAgentPrompt;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -77,6 +81,7 @@ export interface ProviderCapabilities {
 export interface AgentCreated {
   type: 'agentCreated';
   id: number;
+  displayName?: string;
   folderName?: string;
   isExternal?: boolean;
   palette?: number;
@@ -99,6 +104,7 @@ export interface ExistingAgents {
   agentMeta: Record<string, AgentSeatMeta>;
   folderNames: Record<string, string>;
   externalAgents: Record<string, boolean>;
+  displayNames?: Record<string, string>;
 }
 
 export interface AgentSeatMeta {
@@ -314,10 +320,37 @@ export interface WorkspaceFolder {
   path: string;
 }
 
+export interface PreviousSessions {
+  type: 'previousSessions';
+  sessions: PreviousSession[];
+}
+
+export interface PreviousSession {
+  sessionId: string;
+  displayName: string;
+  folderName: string;
+  folderPath: string;
+  lastActivity: string;
+}
+
 export interface AgentDiagnostics {
   type: 'agentDiagnostics';
   agents: Record<string, any>[];
 }
+
+export interface AgentConversation {
+  type: 'agentConversation';
+  id: number;
+  messages: AnonymousSchema_209[];
+}
+
+export interface AnonymousSchema_209 {
+  role: AnonymousSchema_210;
+  text: string;
+  timestamp?: string;
+}
+
+export type AnonymousSchema_210 = 'user' | 'assistant';
 
 export interface WebviewReady {
   type: 'webviewReady';
@@ -325,6 +358,7 @@ export interface WebviewReady {
 
 export interface LaunchAgent {
   type: 'launchAgent';
+  sessionId?: string;
   folderPath?: string;
   bypassPermissions?: boolean;
 }
@@ -432,4 +466,15 @@ export interface SetShowAreas {
 
 export interface RequestDiagnostics {
   type: 'requestDiagnostics';
+}
+
+export interface RequestAgentConversation {
+  type: 'requestAgentConversation';
+  id: number;
+}
+
+export interface SendAgentPrompt {
+  type: 'sendAgentPrompt';
+  id: number;
+  prompt: string;
 }
