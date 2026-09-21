@@ -7,7 +7,8 @@
  *   bun deploy:ubuntu -- --skip-deps --skip-build   # just (re)install the last build
  *
  * Steps: system libraries -> npm dependencies -> desktop build -> installer -> install.
- * Dependencies come from `npm ci` (package-lock.json is the lockfile; no bun.lock is created).
+ * Dependencies are installed with `bun install --no-save`: package.json is the source of truth and
+ * neither bun.lock nor package-lock.json is rewritten (both can lag behind package.json).
  * The install writes to ~/.local/share/com.pixelagents.desktop and ~/.local/share/applications,
  * and the installer starts the app when it finishes.
  */
@@ -107,8 +108,8 @@ if (!skip.system) {
 
 // ── 2. Dependencies ───────────────────────────────────────────────────────────
 if (!skip.deps) {
-  log('Installing dependencies (npm ci, from package-lock.json)');
-  run('npm', ['ci']);
+  log('Installing dependencies (bun install --no-save; lockfiles are left untouched)');
+  run('bun', ['install', '--no-save']);
 }
 
 // ── 3. Build ──────────────────────────────────────────────────────────────────
