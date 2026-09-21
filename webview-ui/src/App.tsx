@@ -218,7 +218,18 @@ function App() {
     hooks.editorTileAction = (col, row) => editor.handleEditorTileAction(col, row);
     hooks.editorEraseAction = (col, row) => editor.handleEditorEraseAction(col, row);
     hooks.getShowAreas = () => effectiveShowAreas;
-  }, [editor.handleEditorTileAction, editor.handleEditorEraseAction, effectiveShowAreas]);
+    hooks.getViewport = () => ({
+      zoom: editor.zoom,
+      panX: editor.panRef.current.x,
+      panY: editor.panRef.current.y,
+    });
+  }, [
+    editor.handleEditorTileAction,
+    editor.handleEditorEraseAction,
+    effectiveShowAreas,
+    editor.zoom,
+    editor.panRef,
+  ]);
 
   const containerRef = useRef<HTMLDivElement>(null);
 

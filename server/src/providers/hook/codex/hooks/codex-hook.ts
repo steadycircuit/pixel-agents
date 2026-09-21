@@ -6,6 +6,7 @@ import * as path from 'path';
 import { HOOK_API_PREFIX, SERVER_JSON_DIR, SERVER_JSON_NAME } from '../../../../constants.js';
 import type { ServerTarget } from '../../../../serverConfig.js';
 import { isServerTarget } from '../../../../serverConfig.js';
+import { readDesktopTarget } from '../../desktopTargets.js';
 
 const root = path.join(os.homedir(), SERVER_JSON_DIR);
 const registry = path.join(root, 'servers');
@@ -33,6 +34,12 @@ function servers(): ServerTarget[] {
   } catch {
     /* Fall back to the legacy single-server pointer below. */
   }
+  const desktop = readDesktopTarget();
+  if (
+    desktop &&
+    !result.some((server) => server.pid === desktop.pid && server.port === desktop.port)
+  )
+    result.push(desktop);
   if (result.length > 0) return result;
   try {
     const value = JSON.parse(fs.readFileSync(path.join(root, SERVER_JSON_NAME), 'utf8')) as unknown;
@@ -50,7 +57,11 @@ function post(server: ServerTarget, body: string): Promise<void> {
         port: server.port,
         path: `${HOOK_API_PREFIX}/codex`,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), Authorization: `Bearer ${server.token}` },
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          Authorization: `Bearer ${server.token}`,
+        },
         timeout: 2_000,
       },
       (response) => {

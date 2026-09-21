@@ -36,12 +36,24 @@ function ourCommand(): string {
   return `node "${scriptPath()}"`;
 }
 
+function isDesktopHelperCommand(command: string): boolean {
+  const normalized = command.replace(/\\/g, '/').trim();
+  return /^"?.*\/\.pixel-agents\/hooks\/desktop\/[^/]+\/[^/]+\/pixel-agents-hook(?:\.exe)?"?\s+--provider\s+codex$/.test(
+    normalized,
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isOurHook(value: unknown): value is HookHandler {
-  return isRecord(value) && value.type === 'command' && value.command === ourCommand();
+  return (
+    isRecord(value) &&
+    value.type === 'command' &&
+    typeof value.command === 'string' &&
+    (value.command === ourCommand() || isDesktopHelperCommand(value.command))
+  );
 }
 
 function readConfig(): { raw: string | null; config: CodexHooksConfig } {
@@ -85,7 +97,9 @@ function writeConfig(config: CodexHooksConfig, mode?: number): void {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tmp = file + CODEX_SETTINGS_TMP_SUFFIX;
-  fs.writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', { mode: mode ?? CODEX_SETTINGS_FRESH_FILE_MODE });
+  fs.writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', {
+    mode: mode ?? CODEX_SETTINGS_FRESH_FILE_MODE,
+  });
   fs.renameSync(tmp, file);
 }
 
@@ -107,14 +121,48 @@ export function areHooksInstalled(): boolean {
     const hooks = config.hooks;
     if (!isRecord(hooks)) return false;
     return Object.values(hooks).some(
-      (entries) => Array.isArray(entries) && entries.some((entry) => isRecord(entry) && Array.isArray(entry.hooks) && entry.hooks.some(isOurHook)),
+      (entries) =>
+        Array.isArray(entries) &&
+        entries.some(
+          (entry) => isRecord(entry) && Array.isArray(entry.hooks) && entry.hooks.some(isOurHook),
+        ),
     );
   } catch {
     return false;
   }
 }
 
-export async function installHooks(): Promise<void> {
+/**
+ * Are any of OUR hook entries the old Node-script form (`node ".../codex-hook.js"`)? That script
+ * predates the desktop app and does not forward to it, so the desktop replaces such entries with
+ * its standalone helper.
+ */
+export function hasLegacyHookCommands(): boolean {
+  try {
+    const { config } = readConfig();
+    const hooks = config.hooks;
+    if (!isRecord(hooks)) return false;
+    return Object.values(hooks).some(
+      (entries) =>
+        Array.isArray(entries) &&
+        entries.some(
+          (entry) =>
+            isRecord(entry) &&
+            Array.isArray(entry.hooks) &&
+            entry.hooks.some(
+              (hook) =>
+                isOurHook(hook) &&
+                typeof hook.command === 'string' &&
+                !isDesktopHelperCommand(hook.command),
+            ),
+        ),
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function installHooks(command = ourCommand()): Promise<void> {
   mutateConfig((config) => {
     if (config.hooks === undefined) config.hooks = {};
     if (!isRecord(config.hooks)) throw new Error('hooks in ~/.codex/hooks.json is not an object');
@@ -129,7 +177,7 @@ export async function installHooks(): Promise<void> {
         ...cleaned.entries,
         {
           matcher: '',
-          hooks: [{ type: 'command', command: ourCommand(), timeout: 5, async: true }],
+          hooks: [{ type: 'command', command, timeout: 5, async: true }],
         },
       ];
       if (JSON.stringify(existing ?? []) !== JSON.stringify(next)) changed = true;

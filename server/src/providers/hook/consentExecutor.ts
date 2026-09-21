@@ -13,6 +13,28 @@ import {
 } from '../../configPersistence.js';
 import { consentActionFor } from './consentGate.js';
 
+/**
+ * Where the durable consent record lives. The legacy surfaces keep it in the shared `config.json`; the
+ * desktop app injects a store over its own profile, so answering never reads or writes the legacy file.
+ * Methods may be async (the desktop store persists durably and can fail).
+ */
+export interface ConsentStore {
+  get(providerId: string): 'granted' | 'declined' | 'unanswered';
+  /** Record the decline AND persist hooks-off in ONE write. */
+  recordDecline(providerId: string): void | Promise<void>;
+  /** Forget a grant only; leaves the preference alone. */
+  clearConsent(providerId: string): void | Promise<void>;
+  /** Forget an answer AND restore the preference default in ONE write. */
+  clearAnswer(providerId: string): void | Promise<void>;
+}
+
+export const legacyConsentStore: ConsentStore = {
+  get: getHooksConsent,
+  recordDecline: recordHooksDecline,
+  clearConsent: clearHooksConsent,
+  clearAnswer: clearHooksAnswer,
+};
+
 /** The per-surface half of carrying out an answer, bound to ONE provider. Each method is the surface's EXISTING path,
  *  not one written for consent: an answer and the Settings toggle take the same route. Failure contract: every method
  *  surfaces its own failure the surface's way and RESOLVES, never rejects — answers are fire-and-forget, so a
@@ -57,9 +79,10 @@ export function applyConsentChoice(
   providerId: string,
   choice: unknown,
   effects: ConsentEffects,
+  store: ConsentStore = legacyConsentStore,
 ): Promise<void> {
   const next = consentQueue.then(() =>
-    runConsentChoice(providerId, choice, effects).catch((err: unknown) => {
+    runConsentChoice(providerId, choice, effects, store).catch((err: unknown) => {
       // Backstop, not a handler: every effect surfaces its own failure and resolves, so nothing should reach this
       // catch. It exists because the returned promise is fire-and-forget — an escaping rejection would surface only
       // as an unhandled-rejection crash log, and one broken effect must not block every later answer in the queue.
@@ -74,12 +97,13 @@ async function runConsentChoice(
   providerId: string,
   choice: unknown,
   effects: ConsentEffects,
+  store: ConsentStore,
 ): Promise<void> {
   // Fail closed: an unreadable settings file reads as "nothing of ours is
   // installed", which maps every choice to its no-file-touch variant. We never
   // uninstall on a guess.
   const installed = await effects.areHooksInstalled().catch(() => false);
-  const consent = getHooksConsent(providerId);
+  const consent = store.get(providerId);
 
   switch (consentActionFor(choice, { installed, consent })) {
     case 'install':
@@ -97,7 +121,7 @@ async function runConsentChoice(
       // verifiably did — a decline over live entries would retire the ask while hooks keep firing.
       await effects.setHooksEnabled(false);
       if (!(await effects.areHooksInstalled().catch(() => true))) {
-        recordHooksDecline(providerId);
+        await store.recordDecline(providerId);
       }
       break;
 
@@ -110,13 +134,13 @@ async function runConsentChoice(
         // resolves to "still there", which keeps the grant and leaves the
         // Settings toggle as the removal route.
         if (!(await effects.areHooksInstalled().catch(() => true))) {
-          clearHooksConsent(providerId);
+          await store.clearConsent(providerId);
         }
         console.log('[Pixel Agents] Hook install undone — you will be asked again next time.');
       } else {
         // Nothing on disk: the grant is all that answer left (an Install recorded, then failed to write). Nothing to
         // uninstall and no settings-file read to go wrong, so clearing our own config.json is unconditional.
-        clearHooksConsent(providerId);
+        await store.clearConsent(providerId);
         console.log('[Pixel Agents] Hook approval withdrawn — you will be asked again next time.');
       }
       await effects.reportHooksStatus();
@@ -135,7 +159,7 @@ async function runConsentChoice(
           break; // still installed: keep the decline, change nothing else
         }
       }
-      clearHooksAnswer(providerId);
+      await store.clearAnswer(providerId);
       console.log('[Pixel Agents] Hook decline withdrawn — you will be asked again next time.');
       await effects.reportHooksStatus();
       break;
@@ -145,7 +169,7 @@ async function runConsentChoice(
       // Record the decline and persist hooks-off WITHOUT touching the settings file: nothing of ours is installed,
       // and routing through the uninstaller would surface a file error for the act of declining. One atomic write
       // covers consent + preference; the effect only mirrors it into live runtime state.
-      recordHooksDecline(providerId);
+      await store.recordDecline(providerId);
       effects.syncHooksPreferenceOff();
       console.log('[Pixel Agents] Hooks disabled. Re-enable them any time in the UI settings.');
       await effects.reportHooksStatus();

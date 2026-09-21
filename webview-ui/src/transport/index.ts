@@ -1,10 +1,12 @@
 import type { ServerMessage } from '../../../core/src/messages.js';
-import { isBrowserRuntime } from '../runtime.js';
+import { isBrowserRuntime, isDesktopRuntime, isE2E } from '../runtime.js';
+import { DesktopTransport } from './desktopTransport.js';
 import { PostMessageTransport } from './postMessageTransport.js';
 import type { MessageTransport } from './types.js';
 import { WebSocketTransport } from './webSocketTransport.js';
 
 function createTransport(): MessageTransport {
+  if (isDesktopRuntime) return new DesktopTransport();
   if (!isBrowserRuntime) {
     return new PostMessageTransport();
   }
@@ -43,4 +45,8 @@ function createTransport(): MessageTransport {
 
 /** Singleton transport instance. Import this everywhere instead of vscodeApi. */
 export const transport: MessageTransport = createTransport();
+
+// Test builds only (the e2e flag is injected by the harness): lets the packaged-app smoke run
+// drive the real transport. Never present in a user's session.
+if (isE2E) (window.__pixelAgentsTestHooks ??= {}).transport = transport;
 export type { MessageTransport } from './types.js';

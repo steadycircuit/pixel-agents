@@ -11,6 +11,7 @@ import {
 } from '../../../../constants.js';
 import type { ServerConfig, ServerTarget } from '../../../../serverConfig.js';
 import { isServerConfig, isServerTarget } from '../../../../serverConfig.js';
+import { readDesktopTarget } from '../../desktopTargets.js';
 
 const SERVER_JSON = path.join(os.homedir(), SERVER_JSON_DIR, SERVER_JSON_NAME);
 const SERVERS_REGISTRY_DIR = path.join(os.homedir(), SERVER_JSON_DIR, SERVERS_DIR);
@@ -167,6 +168,12 @@ async function main(): Promise<void> {
   // Falls back to the single legacy server.json when the registry has no live
   // entries -- e.g. a server on disk that predates the registry (A1/A2).
   let servers: ServerTarget[] = readRegistry();
+  const desktop = readDesktopTarget();
+  if (
+    desktop &&
+    !servers.some((server) => server.pid === desktop.pid && server.port === desktop.port)
+  )
+    servers.push(desktop);
   if (servers.length === 0) {
     try {
       const legacy = JSON.parse(fs.readFileSync(SERVER_JSON, 'utf-8')) as unknown;

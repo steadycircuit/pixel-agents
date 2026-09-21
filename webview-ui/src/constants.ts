@@ -81,8 +81,13 @@ export const CAMERA_FOLLOW_LERP = 0.1;
 export const CAMERA_FOLLOW_SNAP_THRESHOLD = 0.5;
 
 // ── Zoom ─────────────────────────────────────────────────────
-export const ZOOM_MIN = 1;
+/** Zoom is device pixels per sprite pixel. Steps of a quarter pixel give four times the old integer
+ *  granularity; the range floor allows large layouts to fit small windows. */
+export const ZOOM_MIN = 0.5;
 export const ZOOM_MAX = 10;
+export const ZOOM_STEP = 0.25;
+/** Fraction of the viewport the office fills when it is fitted on load and on resize. */
+export const ZOOM_FIT_FILL = 0.92;
 export const ZOOM_DEFAULT = 6;
 export const ZOOM_LEVEL_FADE_DELAY_MS = 1500;
 export const ZOOM_LEVEL_HIDE_DELAY_MS = 2000;
@@ -312,3 +317,22 @@ export const PET_THUMB_SCALE_MARGIN = 0.85;
 export const EMPTY_SPRITE_THUMBNAIL_BG = '#333';
 /** Maximum string length for a PlacedPet.id (defends against pathologically-long layout entries). */
 export const MAX_PET_ID_LENGTH = 128;
+
+// ── Provider identity ────────────────────────────────────────
+// Which CLI owns an agent, shown as a coloured pip on the character's side and a tag in its label.
+export const PROVIDER_IDS = ['claude', 'codex'] as const;
+export const PROVIDER_COLORS: Record<string, string> = {
+  claude: '#d97757',
+  codex: '#10a37f',
+};
+export const PROVIDER_LABELS: Record<string, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+};
+/** Pip geometry in sprite pixels: a square with a dark rim, at the character's top-right. */
+export const PROVIDER_PIP_SIZE = 4;
+/** How far down the sprite the pip sits (0 = top): below the head, clear of speech bubbles. */
+export const PROVIDER_PIP_HEIGHT_FRACTION = 0.5;
+/** Depth-sort key that puts the pip in front of every furniture item and character. */
+export const PROVIDER_PIP_Z_SORT = 1_000_000;
+export const PROVIDER_PIP_RIM_COLOR = '#0a0a14';

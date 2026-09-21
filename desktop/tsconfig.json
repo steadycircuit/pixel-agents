@@ -1,0 +1,6 @@
+{
+  "extends": "../.hutch/devkit/tsconfig.json",
+  "compilerOptions": { "rootDir": "..", "noEmit": true, "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler", "lib": ["ES2022", "DOM"], "types": ["node"], "strict": false, "skipLibCheck": true, "esModuleInterop": true },
+  "include": ["src/**/*.ts", "../server/src/runtimeHost.ts", "../server/src/processSupervisor.ts", "../server/src/persistence/**/*.ts", "../core/src/**/*.ts"],
+  "exclude": ["../node_modules"]
+}

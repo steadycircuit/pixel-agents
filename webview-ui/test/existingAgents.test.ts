@@ -207,3 +207,45 @@ test('layout ready: agent with no metadata is still added with undefined fields'
     },
   ]);
 });
+
+// ── provider markers ────────────────────────────────────────────
+
+test('restored agents get their provider marker, whether added now or buffered for the layout', () => {
+  const providers: Record<number, string> = {};
+  const office = {
+    ...fakeOffice(),
+    setProvider: (id: number, providerId: string | undefined) => {
+      if (providerId) providers[id] = providerId;
+    },
+  };
+  const pending: PendingAgent[] = [];
+  reconcileExistingAgents(
+    office,
+    [1, 2],
+    {},
+    {},
+    true,
+    pending,
+    {},
+    {},
+    { 1: 'claude', 2: 'codex' },
+  );
+  assert.deepEqual(providers, { 1: 'claude', 2: 'codex' });
+
+  const buffered: PendingAgent[] = [];
+  reconcileExistingAgents(fakeOffice(), [3], {}, {}, false, buffered, {}, {}, { 3: 'codex' });
+  assert.equal(buffered[0]?.providerId, 'codex'); // applied later by layoutLoaded
+});
+
+test('an office that cannot mark providers (legacy surfaces) still restores agents', () => {
+  const office = fakeOffice();
+  const pending: PendingAgent[] = [];
+  assert.equal(
+    reconcileExistingAgents(office, [9], {}, {}, true, pending, {}, {}, { 9: 'codex' }),
+    true,
+  );
+  assert.deepEqual(
+    office.calls.map((call) => call.id),
+    [9],
+  );
+});

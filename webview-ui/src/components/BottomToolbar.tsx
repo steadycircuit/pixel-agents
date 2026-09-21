@@ -126,7 +126,7 @@ export function BottomToolbar({
               : 'bg-accent hover:bg-accent-bright'
           }
         >
-          + Agent
+          Staff
         </Button>
         <Dropdown isOpen={isBypassMenuOpen}>
           <DropdownItem onClick={() => handleBypassSelect(true)}>

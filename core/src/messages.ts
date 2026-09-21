@@ -86,6 +86,7 @@ export interface AgentCreated {
   isExternal?: boolean;
   palette?: number;
   hueShift?: number;
+  providerId?: string;
 }
 
 export interface AgentClosed {
@@ -105,6 +106,7 @@ export interface ExistingAgents {
   folderNames: Record<string, string>;
   externalAgents: Record<string, boolean>;
   displayNames?: Record<string, string>;
+  agentProviders?: Record<string, string>;
 }
 
 export interface AgentSeatMeta {
@@ -341,16 +343,16 @@ export interface AgentDiagnostics {
 export interface AgentConversation {
   type: 'agentConversation';
   id: number;
-  messages: AnonymousSchema_209[];
+  messages: AnonymousSchema_212[];
 }
 
-export interface AnonymousSchema_209 {
-  role: AnonymousSchema_210;
+export interface AnonymousSchema_212 {
+  role: AnonymousSchema_213;
   text: string;
   timestamp?: string;
 }
 
-export type AnonymousSchema_210 = 'user' | 'assistant';
+export type AnonymousSchema_213 = 'user' | 'assistant';
 
 export interface WebviewReady {
   type: 'webviewReady';

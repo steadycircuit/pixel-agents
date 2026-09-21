@@ -153,7 +153,7 @@ export async function closeBottomPanel(window: Page): Promise<void> {
         for (const frame of window.frames()) {
           if (!frame.url().startsWith('vscode-webview://')) continue;
           try {
-            if ((await frame.locator('button', { hasText: '+ Agent' }).count()) > 0) return true;
+            if ((await frame.locator('button', { hasText: 'Staff' }).count()) > 0) return true;
           } catch {
             // Frame detached mid-check — treat as gone.
           }
@@ -202,7 +202,7 @@ async function findPixelAgentsFrameOnce(window: Page): Promise<Frame | null> {
     try {
       // count() resolves immediately (no waiting); a non-zero count means
       // this is the Pixel Agents frame.
-      const buttonCount = await frame.locator('button', { hasText: '+ Agent' }).count();
+      const buttonCount = await frame.locator('button', { hasText: 'Staff' }).count();
       if (buttonCount === 0) continue;
       const frameElement = await frame.frameElement();
       const box = await frameElement.boundingBox();
@@ -389,7 +389,7 @@ export async function arrangeReviewLayout(window: Page): Promise<void> {
  *
  * VS Code renders WebviewViewProvider content in an <iframe> whose URL
  * starts with "vscode-webview://". Because VS Code can have multiple
- * webviews, we wait until one frame exposes the "+ Agent" button before
+ * webviews, we wait until one frame exposes the "Staff" button before
  * returning it.
  */
 export async function getPixelAgentsFrame(window: Page): Promise<Frame> {
@@ -402,7 +402,7 @@ export async function getPixelAgentsFrame(window: Page): Promise<Frame> {
         return foundFrame !== null;
       },
       {
-        message: 'Pixel Agents webview frame with "+ Agent" button not found',
+        message: 'Pixel Agents webview frame with "Staff" button not found',
         timeout: WEBVIEW_TIMEOUT_MS,
         intervals: [250, 500, 1000],
       },
@@ -416,10 +416,10 @@ export async function getPixelAgentsFrame(window: Page): Promise<Frame> {
 }
 
 /**
- * Click "+ Agent" in the webview and wait for the call to be dispatched.
+ * Click "Staff" in the webview and wait for the call to be dispatched.
  */
 export async function clickAddAgent(frame: Frame): Promise<void> {
-  const btn = frame.locator('button', { hasText: '+ Agent' });
+  const btn = frame.locator('button', { hasText: 'Staff' });
   await expect(btn).toBeVisible({ timeout: WEBVIEW_TIMEOUT_MS });
   await btn.click();
 }

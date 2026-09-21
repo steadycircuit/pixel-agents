@@ -1,6 +1,6 @@
 # Pixel Agents: Electrobun Desktop Implementation Plan
 
-Last revised: 2026-09-19. Implementation status: **not started**.
+Last revised: 2026-09-21. Implementation status: **in progress** (Linux x64 verified; see the status block in section 13).
 
 This document specifies the migration, including module boundaries, request contracts, persistence, process ownership, build outputs, tests, and release gates. It is based on the current working tree, including the conversation, deterministic-name, dismissal, and Codex changes already present. It does not claim that those changes pass tests or that an Electrobun build has been verified.
 
@@ -547,13 +547,14 @@ P2 and pure contract design can proceed after the baseline while the skeleton is
 Update the following block at the end of every implementation session:
 
 ```text
-Last updated: 2026-09-19
-Current phase: planning; P0 implementation pending
-Completed: repository-based implementation specification
-In progress: none
-Blocked by: no implementation attempted; exact runtime/toolchain/target validation is P0
-Verification: document/source/API review only; no application test claims
-Next: capture baseline and run the packaged compatibility spike
+Last updated: 2026-09-21
+Current phase: P1-P6 substantially implemented and verified on Linux x64; no phase exit gate is fully met
+Completed (Linux x64, dev + stable builds): Cottontail/CEF packaged app loading views://; typed RPC + revisioned events with a DOM-free renderer state reducer; bundled + external asset catalog served in hashed chunks (office renders); Bun-compiled standalone hook helper; journaled/rollback-safe migration with backups, schema guards and crash-injection tests; durable atomic writes; consent gate/executor over the desktop profile (install/notNow/never, revisable); provider-qualified sessions, discovery with eligibility, Codex launch correlation, re-employment; process-tree supervision and awaited shutdown; rotating redacted logs, persisted/clamped window bounds, startup-error dialog; updater state machine; packaged-app smoke (24 checks over real CEF via CDP) and a production smoke asserting no DevTools port; Linux x64 desktop CI workflow
+In progress / not started: typed DesktopClient replacing the legacy-message adapter in the React tree (DesktopTransport remains a compatibility layer); conversation-drawer/history parity checks in the packaged UI; native menus, provider-executable chooser, external asset directory picker, layout import/export dialogs, diagnostics export; reset flows
+Blocked by inputs not available here: macOS/Windows/Linux ARM builds and CEF evidence; signing and notarization; owned HTTPS update origin and update authenticity; real provider CLI acceptance; a real N -> N+1 upgrade
+Legacy removal (section 14): intentionally NOT started - it is gated on parity and cross-platform evidence that does not yet exist
+Verification: check-types, lint (only the pre-existing App.tsx warning), test:desktop (109 tests), test:webview (109 tests), check-types:desktop, verify:desktop-package (dev dir and stable update archive), test:desktop:smoke (24 checks) and the production smoke pass locally on Linux x64. The broad legacy test suite was not re-baselined as green.
+Next: typed DesktopClient migration; remaining native dialogs/menus; run the CI workflow on a real runner; then per-target native evidence before any publish or removal work
 ```
 
 ### Release inputs that must be resolved before publication

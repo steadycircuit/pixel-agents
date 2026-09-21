@@ -13,7 +13,7 @@
 
 import type { HookProvider } from '../../../core/src/provider.js';
 import { claudeProvider } from './hook/claude/claude.js';
-import { codexProvider,copyHookScript as copyCodexHookScript } from './hook/codex/codex.js';
+import { codexProvider, copyHookScript as copyCodexHookScript } from './hook/codex/codex.js';
 
 export { claudeProvider };
 export { codexProvider, copyCodexHookScript };
@@ -29,8 +29,10 @@ export { copyHookScript } from './hook/claude/claudeHookInstaller.js';
 export const activeProvider: HookProvider =
   process.env['PIXEL_AGENTS_PROVIDER']?.toLowerCase() === 'codex' ? codexProvider : claudeProvider;
 
-/** The active provider is the only provider whose hooks are installed and
- * surfaced in the current host process. */
+/** All providers are registered together for the desktop coordinator. */
+export const providerRegistry: readonly HookProvider[] = [claudeProvider, codexProvider];
+
+/** Legacy hosts still select one provider per process during coexistence. */
 export const hookProviders: readonly HookProvider[] = [activeProvider];
 
 /** Resolve a wire-supplied provider id, or undefined for an unknown one —

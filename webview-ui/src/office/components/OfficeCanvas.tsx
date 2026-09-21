@@ -7,9 +7,11 @@ import {
   ZOOM_MAX,
   ZOOM_MIN,
   ZOOM_SCROLL_THRESHOLD,
+  ZOOM_STEP,
 } from '../../constants.js';
 import { unlockAudio } from '../../notificationSound.js';
 import { transport } from '../../transport/index.js';
+import { centeringPan, contentBounds, fitZoom, quantizeZoom, scalePan } from '../cameraFit.js';
 import { getColorizedSprite } from '../colorize.js';
 import { canPlaceFurniture, getWallPlacementRow } from '../editor/editorActions.js';
 import type { EditorState } from '../editor/editorState.js';
@@ -68,6 +70,11 @@ export function OfficeCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const offsetRef = useRef({ x: 0, y: 0 });
+  /** Integer-zoom scene buffer, used only while the zoom is fractional. */
+  const sceneBufferRef = useRef<HTMLCanvasElement | null>(null);
+  const prevZoomRef = useRef(zoom);
+  const isEditModeRef = useRef(isEditMode);
+  isEditModeRef.current = isEditMode;
   // Middle-mouse pan state (imperative, no re-renders)
   const isPanningRef = useRef(false);
   const panStartRef = useRef({ mouseX: 0, mouseY: 0, panX: 0, panY: 0 });
@@ -273,28 +280,80 @@ export function OfficeCanvas({
         };
 
         const layout = officeState.getLayout();
-        const { offsetX, offsetY } = renderFrame(
-          ctx,
-          w,
-          h,
-          officeState.tileMap,
-          officeState.furniture,
-          officeState.getCharacters(),
-          zoom,
-          panRef.current.x,
-          panRef.current.y,
-          selectionRender,
-          editorRender,
-          layout.tileColors,
-          layout.cols,
-          layout.rows,
-          layout.carpetTiles,
-          layout.areas,
-          layout.areaTiles,
-          showAreas,
-          activeAreaLabel,
-          officeState.pets,
-        );
+        // Sprites are cached and drawn at whole device pixels per sprite pixel. A fractional zoom
+        // is rendered at the next whole zoom into a scene buffer and scaled down to the canvas,
+        // so every sprite stays crisp and everything outside the renderer (mouse hit-testing,
+        // overlays, camera) can keep using the fractional zoom directly.
+        const renderZoom = Math.ceil(zoom - 1e-9);
+        const scale = zoom / renderZoom;
+        const paint = (
+          target: CanvasRenderingContext2D,
+          targetW: number,
+          targetH: number,
+          panX: number,
+          panY: number,
+        ) =>
+          renderFrame(
+            target,
+            targetW,
+            targetH,
+            officeState.tileMap,
+            officeState.furniture,
+            officeState.getCharacters(),
+            renderZoom,
+            panX,
+            panY,
+            selectionRender,
+            editorRender,
+            layout.tileColors,
+            layout.cols,
+            layout.rows,
+            layout.carpetTiles,
+            layout.areas,
+            layout.areaTiles,
+            showAreas,
+            activeAreaLabel,
+            officeState.pets,
+          );
+        let offsetX: number;
+        let offsetY: number;
+        if (scale === 1) {
+          ({ offsetX, offsetY } = paint(ctx, w, h, panRef.current.x, panRef.current.y));
+        } else {
+          const sceneW = Math.round(w / scale);
+          const sceneH = Math.round(h / scale);
+          let scene = sceneBufferRef.current;
+          if (!scene || scene.width !== sceneW || scene.height !== sceneH) {
+            scene = document.createElement('canvas');
+            scene.width = sceneW;
+            scene.height = sceneH;
+            sceneBufferRef.current = scene;
+          }
+          const sceneCtx = scene.getContext('2d')!;
+          sceneCtx.imageSmoothingEnabled = false;
+          const painted = paint(
+            sceneCtx,
+            sceneW,
+            sceneH,
+            panRef.current.x / scale,
+            panRef.current.y / scale,
+          );
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(scene, 0, 0, sceneW, sceneH, 0, 0, w, h);
+          offsetX = painted.offsetX * scale;
+          offsetY = painted.offsetY * scale;
+          // The edit buttons were laid out in scene pixels; hit-testing uses canvas pixels.
+          for (const bounds of [
+            editorRender?.deleteButtonBounds,
+            editorRender?.rotateButtonBounds,
+          ]) {
+            if (bounds) {
+              bounds.cx *= scale;
+              bounds.cy *= scale;
+              bounds.radius *= scale;
+            }
+          }
+        }
         offsetRef.current = { x: offsetX, y: offsetY };
 
         // Store delete/rotate button bounds for hit-testing
@@ -318,6 +377,48 @@ export function OfficeCanvas({
     showAreas,
     activeAreaLabel,
   ]);
+
+  // Fit the office to the window: centre the built area and pick the largest zoom step at which it
+  // fits. Runs on load and on every resize, but never while editing (a toolbar opening must not
+  // throw away the user's view) and never with nothing built.
+  const autoFit = useCallback(() => {
+    // Measured from the container, not the canvas: the canvas backing store is resized by a
+    // separate observer whose order relative to this one is not guaranteed.
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const viewW = Math.round(rect.width * dpr);
+    const viewH = Math.round(rect.height * dpr);
+    if (viewW === 0 || viewH === 0) return;
+    const layout = officeState.getLayout();
+    const bounds = contentBounds(layout.tiles, layout.cols, layout.rows);
+    if (!bounds) return;
+    const fit = fitZoom(bounds, viewW, viewH);
+    officeState.cameraFollowId = null;
+    panRef.current = centeringPan(bounds, layout.cols, layout.rows, fit);
+    prevZoomRef.current = fit; // the pan above is already for `fit`; don't rescale it
+    onZoomChange(fit);
+  }, [officeState, panRef, onZoomChange]);
+  const autoFitRef = useRef(autoFit);
+  autoFitRef.current = autoFit;
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => {
+      if (!isEditModeRef.current) autoFitRef.current();
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  // A zoom change (buttons, wheel) keeps the same point at the centre of the view.
+  useEffect(() => {
+    if (prevZoomRef.current === zoom) return;
+    panRef.current = scalePan(panRef.current, prevZoomRef.current, zoom);
+    prevZoomRef.current = zoom;
+  }, [zoom, panRef]);
 
   // Convert CSS mouse coords to world (sprite pixel) coords
   const screenToWorld = useCallback(
@@ -839,9 +940,9 @@ export function OfficeCanvas({
         // Accumulate scroll delta, step zoom when threshold crossed
         zoomAccumulatorRef.current += e.deltaY;
         if (Math.abs(zoomAccumulatorRef.current) >= ZOOM_SCROLL_THRESHOLD) {
-          const delta = zoomAccumulatorRef.current < 0 ? 1 : -1;
+          const delta = zoomAccumulatorRef.current < 0 ? ZOOM_STEP : -ZOOM_STEP;
           zoomAccumulatorRef.current = 0;
-          const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom + delta));
+          const newZoom = quantizeZoom(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom + delta)));
           if (newZoom !== zoom) {
             onZoomChange(newZoom);
           }

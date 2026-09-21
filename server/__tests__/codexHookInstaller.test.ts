@@ -10,7 +10,7 @@ vi.mock('os', async () => {
   return { ...actual, homedir: () => tmpHome };
 });
 
-const { areHooksInstalled, installHooks, uninstallHooks } =
+const { areHooksInstalled, hasLegacyHookCommands, installHooks, uninstallHooks } =
   await import('../src/providers/hook/codex/codexHookInstaller.js');
 
 function configPath(): string {
@@ -30,11 +30,46 @@ describe('codexHookInstaller', () => {
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
+  it('tells the old Node-script entries from the desktop helper, and an install replaces them', async () => {
+    const legacy = `node "${path.join(tmpHome, '.pixel-agents', 'hooks', 'codex-hook.js')}"`;
+    const helper = `"${path.join(tmpHome, '.pixel-agents', 'hooks', 'desktop', '1.0.0', 'linux-x64', 'pixel-agents-hook')}" --provider codex`;
+    fs.mkdirSync(path.join(tmpHome, '.codex'), { recursive: true });
+    const write = (command: string) =>
+      fs.writeFileSync(
+        configPath(),
+        JSON.stringify({
+          hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command }] }] },
+        }),
+      );
+    expect(hasLegacyHookCommands()).toBe(false); // nothing installed yet
+    write(legacy);
+    expect(areHooksInstalled()).toBe(true);
+    expect(hasLegacyHookCommands()).toBe(true);
+    write(helper);
+    expect(areHooksInstalled()).toBe(true);
+    expect(hasLegacyHookCommands()).toBe(false);
+    // A third party's node script is not ours and never counts as legacy.
+    fs.writeFileSync(
+      configPath(),
+      JSON.stringify({
+        hooks: { Stop: [{ hooks: [{ type: 'command', command: 'node /other.js' }] }] },
+      }),
+    );
+    expect(hasLegacyHookCommands()).toBe(false);
+    // Installing the helper over old entries removes the old form.
+    write(legacy);
+    await installHooks(helper);
+    expect(hasLegacyHookCommands()).toBe(false);
+    expect(areHooksInstalled()).toBe(true);
+  });
+
   it('installs idempotent entries while retaining third-party hooks', async () => {
     fs.mkdirSync(path.join(tmpHome, '.codex'), { recursive: true });
     fs.writeFileSync(
       configPath(),
-      JSON.stringify({ hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'node /other.js' }] }] } }),
+      JSON.stringify({
+        hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'node /other.js' }] }] },
+      }),
     );
     await installHooks();
     await installHooks();

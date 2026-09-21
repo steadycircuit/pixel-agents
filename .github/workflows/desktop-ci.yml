@@ -1,0 +1,116 @@
+# Desktop (Electrobun + CEF) CI. Native targets are added here only once they have passed a real
+# clean-profile run; see docs/desktop/releasing.md for the evidence still outstanding per target.
+
+name: Desktop CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'desktop/**'
+      - 'core/**'
+      - 'server/**'
+      - 'webview-ui/**'
+      - 'scripts/**'
+      - 'electrobun.config.ts'
+      - 'hutch.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/desktop-ci.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'desktop/**'
+      - 'core/**'
+      - 'server/**'
+      - 'webview-ui/**'
+      - 'scripts/**'
+      - 'electrobun.config.ts'
+      - 'hutch.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  static-and-unit:
+    name: Static checks and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm run check-types
+      - run: npm run lint
+      - run: npm run test:desktop
+      - run: npm run test:webview
+
+  linux-x64-native:
+    name: Linux x64 build, package verification and packaged-app smoke
+    runs-on: ubuntu-24.04
+    needs: static-and-unit
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      # The standalone hook helper is compiled with this exact Bun (scripts/build-hook-helper.mjs
+      # refuses any other version). It is a build-time tool only; the shipped app does not need Bun.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      # CEF still needs the GTK/AppIndicator/librsvg runtime libraries, and the smoke run needs a
+      # display. Verify these package names against the runner image on the first run.
+      - name: Install Linux runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0t64 libwebkit2gtk-4.1-0 libayatana-appindicator3-1 librsvg2-common
+      - name: Cache Electrobun/Hutch/CEF downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/com.pixelagents.desktop
+            ~/.cache/hutch
+            .hutch
+          key: desktop-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json', 'hutch.config.ts', 'docs/desktop/toolchain.md') }}
+      - run: npm ci
+      - run: npm run test:hook-helper
+      - name: Build the native app (Cottontail + CEF)
+        run: npm run check-types:desktop
+      - name: Verify the packaged artifact
+        run: npm run verify:desktop-package -- --artifact build/dev-linux-x64
+      - name: Packaged-app smoke test
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" npm run test:desktop:smoke -- --artifact build/dev-linux-x64 --keep
+      - name: Build the stable-channel artifacts
+        run: npm run desktop:build
+      - name: Verify the stable update archive (and its manifest)
+        run: npm run verify:desktop-package -- --artifact artifacts/stable-linux-x64-PixelAgents.tar.zst
+      - name: Production smoke (no test surfaces exposed)
+        run: |
+          set -euo pipefail
+          APP="$(ls -d /tmp/pixel-agents-verify-*/PixelAgents | head -1)"
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" node scripts/smoke-desktop.mjs --artifact "$APP" --production --keep
+      - name: Upload smoke logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-linux-x64
+          path: |
+            /tmp/pixel-agents-smoke-*
+            /tmp/pixel-agents-smoke-prod-*
+          if-no-files-found: ignore

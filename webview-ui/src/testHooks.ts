@@ -6,6 +6,8 @@ import { carpetJunctionCase } from './office/sprites/carpetTiles.js';
 declare global {
   interface Window {
     __pixelAgentsTestHooks?: {
+      /** The active MessageTransport, for driving real host RPCs from the desktop smoke run. */
+      transport?: { send(message: never): void };
       playedSounds?: Array<{ kind: string; at: number }>;
       getCharacters?: () => Array<{
         id: number;
@@ -15,6 +17,7 @@ declare global {
         waitingAwaitingInput?: boolean;
         isHeadless?: boolean;
         isGreeter?: boolean;
+        providerId?: string;
       }>;
       /** Effective "Display headless as ghosts" setting the renderer is using. */
       getGhostHeadlessAgents?: () => boolean;
@@ -37,6 +40,8 @@ declare global {
       getAreaTiles?: () => Array<{ col: number; row: number; label: string }>;
       /** Folder→Area mappings received by OfficeState. */
       getAreaMappings?: () => Record<string, string[]>;
+      /** Current zoom and pan (device px), to check the office is fitted and centred. */
+      getViewport?: () => { zoom: number; panX: number; panY: number };
       /** Effective show-areas gate (settings toggle OR active area edit). */
       getShowAreas?: () => boolean;
       /** Count of placed furniture instances — lets a spec assert furniture
@@ -129,6 +134,7 @@ export function installTestHooks(officeStateRef: { current: OfficeState | null }
       waitingAwaitingInput: ch.waitingAwaitingInput,
       isHeadless: ch.isHeadless,
       isGreeter: ch.isGreeter,
+      providerId: ch.providerId,
     }));
   };
 

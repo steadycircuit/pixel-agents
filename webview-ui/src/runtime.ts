@@ -8,12 +8,17 @@
 
 declare function acquireVsCodeApi(): unknown;
 
-type Runtime = 'vscode' | 'browser';
-// Future: 'cursor' | 'windsurf' | 'electron' | etc.
+type Runtime = 'vscode' | 'desktop' | 'browser';
 
-const runtime: Runtime = typeof acquireVsCodeApi !== 'undefined' ? 'vscode' : 'browser';
+const runtime: Runtime =
+  typeof acquireVsCodeApi !== 'undefined'
+    ? 'vscode'
+    : typeof window !== 'undefined' && '__electrobunWebviewId' in window
+      ? 'desktop'
+      : 'browser';
 
 export const isBrowserRuntime = runtime === 'browser';
+export const isDesktopRuntime = runtime === 'desktop';
 
 /**
  * True only under the Playwright e2e harness, which sets `__PIXEL_AGENTS_E2E`

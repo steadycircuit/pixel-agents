@@ -13,6 +13,8 @@ import {
   CONTEXT_GAUGE_HEIGHT_PX,
   CONTEXT_GAUGE_WIDTH_PX,
   CONTEXT_WARN_THRESHOLD,
+  PROVIDER_COLORS,
+  PROVIDER_LABELS,
   TEAM_LEAD_COLOR,
   TEAM_ROLE_COLOR,
   TOOL_OVERLAY_VERTICAL_OFFSET,
@@ -236,6 +238,15 @@ export function ToolOverlay({
                 {!isSub && ch.displayName && (
                   <span className="overflow-hidden text-ellipsis block leading-none font-bold">
                     {ch.displayName}
+                  </span>
+                )}
+                {!isSub && ch.providerId && PROVIDER_LABELS[ch.providerId] && (
+                  <span
+                    className="block leading-none"
+                    data-testid="provider-tag"
+                    style={{ fontSize: '18px', color: PROVIDER_COLORS[ch.providerId] }}
+                  >
+                    {PROVIDER_LABELS[ch.providerId]}
                   </span>
                 )}
                 {teamRoleLabel && (

@@ -34,6 +34,11 @@ import {
   HEADLESS_CHARACTER_ALPHA,
   HOVERED_OUTLINE_ALPHA,
   OUTLINE_Z_SORT_OFFSET,
+  PROVIDER_COLORS,
+  PROVIDER_PIP_HEIGHT_FRACTION,
+  PROVIDER_PIP_RIM_COLOR,
+  PROVIDER_PIP_SIZE,
+  PROVIDER_PIP_Z_SORT,
   ROTATE_BUTTON_BG,
   SEAT_AVAILABLE_COLOR,
   SEAT_BUSY_COLOR,
@@ -458,6 +463,29 @@ export function renderScene(
         c.restore();
       },
     });
+
+    // Provider marker: a coloured square with a dark rim at the character's right side, so a Claude
+    // and a Codex agent can be told apart at a glance. Sorted above everything so a desk or
+    // monitor in front of the character never hides it.
+    const pipColor = ch.providerId ? PROVIDER_COLORS[ch.providerId] : undefined;
+    if (pipColor) {
+      drawables.push({
+        zY: PROVIDER_PIP_Z_SORT,
+        draw: (c) => {
+          const size = PROVIDER_PIP_SIZE * zoom;
+          // Beside the torso, below the head: speech bubbles are drawn above the head and would hide it.
+          const x = drawX + cached.width - size;
+          const y = drawY + Math.round(cached.height * PROVIDER_PIP_HEIGHT_FRACTION);
+          c.save();
+          c.globalAlpha = alpha;
+          c.fillStyle = PROVIDER_PIP_RIM_COLOR;
+          c.fillRect(x - zoom, y - zoom, size + 2 * zoom, size + 2 * zoom);
+          c.fillStyle = pipColor;
+          c.fillRect(x, y, size, size);
+          c.restore();
+        },
+      });
+    }
   }
 
   // ── Pets ──────────────────────────────────────────────

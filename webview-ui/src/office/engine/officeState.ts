@@ -1083,6 +1083,13 @@ export class OfficeState {
     ch.isHeadless = headless;
   }
 
+  /** Record which provider owns an agent, for the marker on its character and its label. */
+  setProvider(id: number, providerId: string | undefined): void {
+    const ch = this.characters.get(id);
+    if (!ch) return;
+    ch.providerId = providerId;
+  }
+
   setAgentContext(id: number, contextTokens: number, maxContextTokens: number): void {
     const ch = this.characters.get(id);
     if (!ch) return;

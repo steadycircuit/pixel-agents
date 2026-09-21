@@ -296,6 +296,7 @@ const LEGACY_HOOK_PATH_SUFFIX = `/${LEGACY_HOOK_SCRIPT_NAME}`;
  *  separator is load-bearing — without it `/opt/evil.pixel-agents/hooks/...`
  *  and `my-pixel-agents-hook.js` match by substring. */
 const HOOK_PATH_SUFFIX = `/${HOOK_SCRIPTS_DIR}/${CLAUDE_HOOK_SCRIPT_NAME}`;
+const DESKTOP_HELPER_PATH_SEGMENT = `/${HOOK_SCRIPTS_DIR}/desktop/`;
 
 /** Characters that end a path token in a shell command line. A path we own is
  *  either the whole token or ends at one of these; anything else after it
@@ -359,7 +360,13 @@ function isOurHookCommand(command: string): boolean {
   // Both suffix constants are lower-case, so folding the token is the whole
   // normalization.
   const normalized = token.toLowerCase();
-  return normalized.endsWith(HOOK_PATH_SUFFIX) || normalized.endsWith(LEGACY_HOOK_PATH_SUFFIX);
+  return (
+    normalized.endsWith(HOOK_PATH_SUFFIX) ||
+    normalized.endsWith(LEGACY_HOOK_PATH_SUFFIX) ||
+    (normalized.includes(DESKTOP_HELPER_PATH_SEGMENT) &&
+      /\/pixel-agents-hook(?:\.exe)?$/.test(normalized) &&
+      /\s--provider\s+claude\s*$/.test(command))
+  );
 }
 
 /**
@@ -533,13 +540,13 @@ function makeHookCommand(): string {
 }
 
 /** Create a hook entry object for Claude's settings.json. Matcher is empty (catch-all). */
-function makeHookEntry(): ClaudeHookEntry {
+function makeHookEntry(command = makeHookCommand()): ClaudeHookEntry {
   return {
     matcher: '',
     hooks: [
       {
         type: 'command',
-        command: makeHookCommand(),
+        command,
         timeout: 5,
       },
     ],
@@ -585,6 +592,44 @@ export function areHooksInstalled(): boolean {
   );
 }
 
+function isDesktopHelperCommand(command: string): boolean {
+  const token = firstCommandToken(command);
+  return (
+    token !== null &&
+    token.toLowerCase().includes(DESKTOP_HELPER_PATH_SEGMENT) &&
+    /\/pixel-agents-hook(?:\.exe)?$/.test(token.toLowerCase()) &&
+    /\s--provider\s+claude\s*$/.test(command)
+  );
+}
+
+/**
+ * Are any of OUR hook entries the old Node-script form (`node ".../claude-hook.js"`)? The desktop
+ * app replaces those with its standalone helper.
+ */
+export function hasLegacyHookCommands(): boolean {
+  let settings: ClaudeSettings;
+  try {
+    settings = readClaudeSettings();
+  } catch {
+    return false;
+  }
+  const hooks = settings.hooks;
+  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return false;
+  return Object.values(hooks).some(
+    (entries) =>
+      Array.isArray(entries) &&
+      entries.some(
+        (entry) =>
+          entry !== null &&
+          typeof entry === 'object' &&
+          Array.isArray(entry.hooks) &&
+          entry.hooks.some(
+            (hook) => isOurHook(hook) && !isDesktopHelperCommand(String(hook.command ?? '')),
+          ),
+      ),
+  );
+}
+
 /**
  * Install Pixel Agents hook entries into ~/.claude/settings.json for
  * Notification, Stop, and PermissionRequest events. Idempotent: removes
@@ -594,10 +639,10 @@ export function areHooksInstalled(): boolean {
  * keeps changing concurrently — callers surface the error to the user instead
  * of installing.
  */
-export async function installHooks(): Promise<void> {
+export async function installHooks(command?: string): Promise<void> {
   let wrote: boolean;
   try {
-    wrote = await installEntries();
+    wrote = await installEntries(command);
   } catch (e) {
     throw new Error(`${e instanceof Error ? e.message : String(e)} — hooks not installed.`, {
       cause: e,
@@ -608,7 +653,7 @@ export async function installHooks(): Promise<void> {
   }
 }
 
-function installEntries(): Promise<boolean> {
+function installEntries(command?: string): Promise<boolean> {
   return mutateClaudeSettings((settings) => {
     if (settings.hooks === undefined || settings.hooks === null) {
       settings.hooks = {};
@@ -666,7 +711,7 @@ function installEntries(): Promise<boolean> {
       }
       const entries = hooks[event];
       // Remove any existing Pixel Agents commands (in case the script path changed)
-      const filtered = (withoutOurEntries(entries) ?? entries).concat(makeHookEntry());
+      const filtered = (withoutOurEntries(entries) ?? entries).concat(makeHookEntry(command));
       if (JSON.stringify(filtered) !== JSON.stringify(entries)) {
         hooks[event] = filtered;
         changed = true;

@@ -1,7 +1,10 @@
 # Compiled output
 out
 dist
+build
 node_modules
+.hutch
+desktop/generated
 *.tsbuildinfo
 
 # Logs
@@ -50,3 +53,6 @@ agent-orchestrator.yaml
 .ao/
 .serena/
 tasks/
+
+# Electrobun release artifacts (installer, update archive, update manifest)
+/artifacts/

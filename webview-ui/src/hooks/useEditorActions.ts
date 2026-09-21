@@ -9,6 +9,7 @@ import {
   ZOOM_MAX,
   ZOOM_MIN,
 } from '../constants.js';
+import { quantizeZoom } from '../office/cameraFit.js';
 import type { ExpandDirection } from '../office/editor/editorActions.js';
 import {
   addArea,
@@ -544,7 +545,7 @@ export function useEditorActions(
   }, []);
 
   const handleZoomChange = useCallback((newZoom: number) => {
-    setZoom(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newZoom)));
+    setZoom(quantizeZoom(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newZoom))));
   }, []);
 
   const handleDragMove = useCallback(

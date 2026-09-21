@@ -120,6 +120,11 @@ function browserMockAssetsPlugin(): Plugin {
 }
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      'electrobun/view': path.resolve(__dirname, '../.hutch/devkit/api/browser/index.ts'),
+    },
+  },
   plugins: [tailwindcss(), react(), browserMockAssetsPlugin()],
   build: {
     outDir: '../dist/webview',

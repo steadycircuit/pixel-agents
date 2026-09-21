@@ -204,6 +204,11 @@ components:
         hueShift:
           type: integer
           description: Server-assigned hue shift in degrees (0-360).
+        providerId:
+          type: string
+          description: >-
+            Which provider owns the agent (`claude` or `codex`). Absent on surfaces that only run one
+            provider; the renderer then shows no provider marker.
 
     AgentClosed:
       description: An agent has been removed from the office.
@@ -259,6 +264,11 @@ components:
         displayNames:
           type: object
           description: Map of agent ID (string) to deterministic display name.
+          additionalProperties:
+            type: string
+        agentProviders:
+          type: object
+          description: Map of agent ID (string) to provider id (`claude` or `codex`). Optional.
           additionalProperties:
             type: string
 
