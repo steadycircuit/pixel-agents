@@ -14,7 +14,13 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-type Kind = 'none' | 'legacy' | 'desktop';
+/**
+ * What is on disk. Claude wants the standalone 'helper'; Codex wants the reviewed node 'script'
+ * (Codex only runs hooks whose exact definition the user approved, so the helper would silently
+ * disable them). 'script' is therefore "old" for Claude and "current" for Codex.
+ */
+type Kind = 'none' | 'script' | 'helper';
+const WANTED: Record<'claude' | 'codex', Kind> = { claude: 'helper', codex: 'script' };
 async function setup(disk: { claude: Kind; codex: Kind }, options: { failInstall?: boolean } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'pixel-adopt-'));
   roots.push(root);
@@ -33,10 +39,11 @@ async function setup(disk: { claude: Kind; codex: Kind }, options: { failInstall
     async setHooksEnabled(providerId: 'claude' | 'codex', enabled: boolean) {
       calls.push(`${enabled ? 'install' : 'uninstall'}:${providerId}`);
       if (enabled && options.failInstall) throw new Error('hooks.json is read-only');
-      disk[providerId] = enabled ? 'desktop' : 'none';
+      disk[providerId] = enabled ? WANTED[providerId] : 'none';
     },
     areHooksInstalled: async (providerId: 'claude' | 'codex') => disk[providerId] !== 'none',
-    hasLegacyHooks: async (providerId: 'claude' | 'codex') => disk[providerId] === 'legacy',
+    needsUpgrade: async (providerId: 'claude' | 'codex') =>
+      disk[providerId] !== 'none' && disk[providerId] !== WANTED[providerId],
   };
   const view = (providerId: 'claude' | 'codex') => ({
     disk: disk[providerId],
@@ -48,14 +55,30 @@ async function setup(disk: { claude: Kind; codex: Kind }, options: { failInstall
 }
 
 describe('adopting hooks that are already installed', () => {
-  it('upgrades old Node-script entries to the desktop helper, so that provider reaches the app', async () => {
-    const t = await setup({ claude: 'desktop', codex: 'legacy' });
+  it('upgrades Claude entries that never reach the desktop app to the standalone helper', async () => {
+    const t = await setup({ claude: 'script', codex: 'script' });
+    try {
+      const outcome = await adoptExistingHooks(t.host, t.native);
+      expect(outcome.claude).toBe('upgraded');
+      expect(t.view('claude')).toEqual({
+        disk: 'helper',
+        consent: 'granted',
+        enabled: true,
+        asked: false,
+      });
+    } finally {
+      await t.stop();
+    }
+  });
+
+  it('moves Codex BACK to the reviewed script form: the helper form would never be approved', async () => {
+    const t = await setup({ claude: 'helper', codex: 'helper' });
     try {
       const outcome = await adoptExistingHooks(t.host, t.native);
       expect(outcome.codex).toBe('upgraded');
       expect(t.calls).toEqual(['install:codex']);
       expect(t.view('codex')).toEqual({
-        disk: 'desktop',
+        disk: 'script',
         consent: 'granted',
         enabled: true,
         asked: false,
@@ -66,7 +89,7 @@ describe('adopting hooks that are already installed', () => {
   });
 
   it('records consent silently for our own current entries, without touching the provider file', async () => {
-    const t = await setup({ claude: 'desktop', codex: 'none' });
+    const t = await setup({ claude: 'helper', codex: 'none' });
     try {
       const outcome = await adoptExistingHooks(t.host, t.native);
       expect(outcome.claude).toBe('recorded');
@@ -90,14 +113,14 @@ describe('adopting hooks that are already installed', () => {
   });
 
   it('respects an explicit decline even when entries remain on disk', async () => {
-    const t = await setup({ claude: 'desktop', codex: 'legacy' });
+    const t = await setup({ claude: 'helper', codex: 'helper' });
     try {
       await t.host.consent.recordDecline('codex');
       const outcome = await adoptExistingHooks(t.host, t.native);
       expect(outcome.codex).toBe('declined');
       expect(t.calls).toEqual([]);
       expect(t.view('codex')).toMatchObject({
-        disk: 'legacy',
+        disk: 'helper',
         consent: 'declined',
         enabled: false,
       });
@@ -107,7 +130,7 @@ describe('adopting hooks that are already installed', () => {
   });
 
   it('is idempotent: a second pass changes nothing', async () => {
-    const t = await setup({ claude: 'legacy', codex: 'legacy' });
+    const t = await setup({ claude: 'script', codex: 'helper' });
     try {
       await adoptExistingHooks(t.host, t.native);
       t.calls.length = 0;
@@ -120,13 +143,13 @@ describe('adopting hooks that are already installed', () => {
   });
 
   it('a failed upgrade is logged and leaves the entries and the other provider alone', async () => {
-    const t = await setup({ claude: 'desktop', codex: 'legacy' }, { failInstall: true });
+    const t = await setup({ claude: 'helper', codex: 'helper' }, { failInstall: true });
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       const outcome = await adoptExistingHooks(t.host, t.native);
       expect(outcome.codex).toBe('current');
       expect(outcome.claude).toBe('recorded');
-      expect(t.view('codex')).toMatchObject({ disk: 'legacy', enabled: false });
+      expect(t.view('codex')).toMatchObject({ disk: 'helper', enabled: false });
       expect(errors).toHaveBeenCalled();
     } finally {
       errors.mockRestore();

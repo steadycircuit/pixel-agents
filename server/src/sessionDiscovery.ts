@@ -118,3 +118,24 @@ export function discoverSessions(
     .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
     .slice(0, MAX_DISCOVERED_SESSIONS);
 }
+
+/**
+ * Finds a session's transcript by id under the provider's own roots (never a renderer-supplied
+ * path). Used for agents whose hook events never named one, e.g. sessions first seen mid-flight.
+ * Claude names the file `<sessionId>.jsonl`; Codex embeds the id (`rollout-<time>-<sessionId>.jsonl`).
+ */
+export function locateTranscript(
+  provider: HookProvider,
+  sessionId: string,
+  roots: readonly string[] = provider.getAllSessionRoots?.() ?? [],
+): string | undefined {
+  if (!sessionId || /[\\/]/.test(sessionId)) return undefined;
+  const escaped = sessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Codex: rollout-2026-09-20T10-54-56-<sessionId>.jsonl. Anything looser lets a short id match the
+  // tail of another session's file name.
+  const codexName = new RegExp(`^rollout-\\d{4}-\\d{2}-\\d{2}T[\\d-]+-${escaped}\\.jsonl$`);
+  return listTranscripts(roots).find((file) => {
+    const name = path.basename(file);
+    return name === `${sessionId}.jsonl` || codexName.test(name);
+  });
+}

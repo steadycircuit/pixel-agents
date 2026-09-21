@@ -17,15 +17,20 @@ import {
 } from '../../server/src/providers/hook/claude/claudeHookInstaller.js';
 import {
   areHooksInstalled as areCodexHooksInstalled,
-  hasLegacyHookCommands as hasLegacyCodexHooks,
+  hasDesktopHelperCommands as hasCodexHelperHooks,
+  hasOutdatedHandlerSettings as hasOutdatedCodexHandlers,
+  isHookScriptStale as isCodexScriptStale,
   uninstallHooks as uninstallCodexHooks,
 } from '../../server/src/providers/hook/codex/codexHookInstaller.js';
-import { installDesktopHelper } from '../../server/src/providers/hook/desktopHelperInstaller.js';
+import {
+  installCodexScriptHooks,
+  installDesktopHelper,
+} from '../../server/src/providers/hook/desktopHelperInstaller.js';
 import { createRuntimeHost } from '../../server/src/runtimeHost.js';
 import { APP_VERSION } from '../generated/buildInfo.js';
 import { createConsentService } from './consentService.js';
-import { adoptExistingHooks } from './hookAdoption.js';
 import { EventBridge } from './eventBridge.js';
+import { adoptExistingHooks } from './hookAdoption.js';
 import { captureConsole, createLogger } from './logging.js';
 import { desktopRoot, logRoot, resourceRoot } from './paths.js';
 import { createDesktopRPC } from './rpcHandlers.js';
@@ -108,6 +113,10 @@ export async function startDesktop(): Promise<void> {
         else await uninstallCodexHooks();
         return;
       }
+      if (providerId === 'codex') {
+        await installCodexScriptHooks(path.join(resourceRoot(), 'hooks', 'codex-hook.js'));
+        return;
+      }
       const suffix = process.platform === 'win32' ? '.exe' : '';
       await installDesktopHelper({
         providerId,
@@ -153,8 +162,12 @@ export async function startDesktop(): Promise<void> {
   // brought under the desktop helper once, in the background; failures are logged, never fatal.
   void adoptExistingHooks(host, {
     ...nativeServices,
-    hasLegacyHooks: async (providerId) =>
-      providerId === 'claude' ? hasLegacyClaudeHooks() : hasLegacyCodexHooks(),
+    needsUpgrade: async (providerId) =>
+      providerId === 'claude'
+        ? hasLegacyClaudeHooks()
+        : hasCodexHelperHooks() ||
+          hasOutdatedCodexHandlers() ||
+          isCodexScriptStale(path.join(resourceRoot(), 'hooks', 'codex-hook.js')),
   }).then((outcome) => console.log('[Desktop] Existing hooks:', JSON.stringify(outcome)));
   rpc = createDesktopRPC(
     host,

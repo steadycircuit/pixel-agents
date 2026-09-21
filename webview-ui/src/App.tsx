@@ -28,7 +28,7 @@ import { isRotatable } from './office/layout/furnitureCatalog.js';
 import { migrateLayoutColors } from './office/layout/layoutSerializer.js';
 import { getPetCount } from './office/sprites/petSpriteData.js';
 import { EditTool, type OfficeLayout } from './office/types.js';
-import { isBrowserRuntime, isE2E } from './runtime.js';
+import { hasConversationDrawer, isBrowserRuntime, isE2E } from './runtime.js';
 import { installTestHooks } from './testHooks.js';
 import { transport } from './transport/index.js';
 
@@ -255,12 +255,18 @@ function App() {
     const os = getOfficeState();
     const meta = os.subagentMeta.get(agentId);
     const focusId = meta ? meta.parentAgentId : agentId;
-    if (isBrowserRuntime) {
+    if (hasConversationDrawer) {
       setConversationAgentId(focusId);
     } else {
       transport.send({ type: 'focusAgent', id: focusId });
     }
   }, []);
+
+  // e2e: open an agent's conversation the way clicking its character does. Guarded on isE2E.
+  useEffect(() => {
+    if (!isE2E || typeof window === 'undefined') return;
+    (window.__pixelAgentsTestHooks ??= {}).openConversation = (id) => handleClick(id);
+  }, [handleClick]);
 
   const officeState = getOfficeState();
 
@@ -374,7 +380,7 @@ function App() {
         activeAreaLabel={activeAreaLabel}
       />
 
-      {isBrowserRuntime && conversationAgentId !== null && (
+      {hasConversationDrawer && conversationAgentId !== null && (
         <ConversationDrawer
           agentId={conversationAgentId}
           displayName={officeState.characters.get(conversationAgentId)?.displayName}

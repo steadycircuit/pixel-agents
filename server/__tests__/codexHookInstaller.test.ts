@@ -10,8 +10,17 @@ vi.mock('os', async () => {
   return { ...actual, homedir: () => tmpHome };
 });
 
-const { areHooksInstalled, hasLegacyHookCommands, installHooks, uninstallHooks } =
-  await import('../src/providers/hook/codex/codexHookInstaller.js');
+const {
+  areHooksInstalled,
+  hasDesktopHelperCommands,
+  hasOutdatedHandlerSettings,
+  hasLegacyHookCommands,
+  hookScriptPath,
+  installHooks,
+  isHookScriptStale,
+  refreshHookScript,
+  uninstallHooks,
+} = await import('../src/providers/hook/codex/codexHookInstaller.js');
 
 function configPath(): string {
   return path.join(tmpHome, '.codex', 'hooks.json');
@@ -61,6 +70,80 @@ describe('codexHookInstaller', () => {
     await installHooks(helper);
     expect(hasLegacyHookCommands()).toBe(false);
     expect(areHooksInstalled()).toBe(true);
+  });
+
+  it('the desktop keeps Codex on the reviewed script form and refreshes the script behind it', async () => {
+    const helper = `"${path.join(tmpHome, '.pixel-agents', 'hooks', 'desktop', '1.0.0', 'linux-x64', 'pixel-agents-hook')}" --provider codex`;
+    fs.mkdirSync(path.join(tmpHome, '.codex'), { recursive: true });
+    const source = path.join(tmpHome, 'packaged-codex-hook.js');
+    fs.writeFileSync(source, '// current script that forwards to the desktop app');
+
+    // The helper form is detected (it is what a Codex review would reject after an update)...
+    await installHooks(helper);
+    expect(hasDesktopHelperCommands()).toBe(true);
+
+    // ...and installing the script form replaces it with EXACTLY the definition users approved.
+    await installHooks();
+    expect(hasDesktopHelperCommands()).toBe(false);
+    const entry = (readConfig().hooks as Record<string, Array<Record<string, unknown>>>)
+      .PreToolUse![0]!;
+    expect(entry).toEqual({
+      matcher: '',
+      hooks: [{ type: 'command', command: `node "${hookScriptPath()}"`, timeout: 5, async: true }],
+    });
+
+    // The script file is refreshed without touching hooks.json, so approval is not lost.
+    const before = fs.readFileSync(configPath(), 'utf8');
+    expect(isHookScriptStale(source)).toBe(true); // nothing installed yet
+    expect(refreshHookScript(source)).toBe(true);
+    expect(fs.readFileSync(hookScriptPath(), 'utf8')).toContain('forwards to the desktop app');
+    expect(isHookScriptStale(source)).toBe(false);
+    expect(fs.statSync(hookScriptPath()).mode & 0o777).toBe(0o700);
+    expect(fs.readFileSync(configPath(), 'utf8')).toBe(before);
+    // Idempotent, and a missing source is reported instead of clobbering the script.
+    expect(refreshHookScript(source)).toBe(true);
+    expect(refreshHookScript(path.join(tmpHome, 'missing.js'))).toBe(false);
+    expect(fs.readFileSync(hookScriptPath(), 'utf8')).toContain('forwards to the desktop app');
+  });
+
+  it('declares the limits Codex enforces, so it stops warning at every start', async () => {
+    await installHooks();
+    const hooks = readConfig().hooks as Record<
+      string,
+      Array<{ hooks: Array<Record<string, unknown>> }>
+    >;
+    const handler = (event: string) => hooks[event]![0]!.hooks[0]!;
+    // Codex: "clamping SessionEnd hook timeout to 3s", "running async SessionEnd hook synchronously",
+    // "clamping Interrupt hook timeout to 3s".
+    expect(handler('SessionEnd')).toMatchObject({ timeout: 3 });
+    expect('async' in handler('SessionEnd')).toBe(false);
+    expect(handler('Interrupt')).toMatchObject({ timeout: 3, async: true });
+    for (const event of ['SessionStart', 'Stop', 'PreToolUse', 'PostToolUse', 'PermissionRequest'])
+      expect(handler(event)).toMatchObject({ timeout: 5, async: true });
+    expect(hasOutdatedHandlerSettings()).toBe(false);
+  });
+
+  it('spots entries written with the old uniform settings, and a reinstall repairs them', async () => {
+    fs.mkdirSync(path.join(tmpHome, '.codex'), { recursive: true });
+    const command = `node "${hookScriptPath()}"`;
+    const old = { matcher: '', hooks: [{ type: 'command', command, timeout: 5, async: true }] };
+    fs.writeFileSync(
+      configPath(),
+      JSON.stringify({ hooks: { SessionEnd: [old], Interrupt: [old], Stop: [old] } }),
+    );
+    expect(hasOutdatedHandlerSettings()).toBe(true);
+    await installHooks();
+    expect(hasOutdatedHandlerSettings()).toBe(false);
+    // A third party's entry with unusual settings is never "ours" and never rewritten.
+    fs.writeFileSync(
+      configPath(),
+      JSON.stringify({
+        hooks: {
+          SessionEnd: [{ hooks: [{ type: 'command', command: 'node /other.js', timeout: 60 }] }],
+        },
+      }),
+    );
+    expect(hasOutdatedHandlerSettings()).toBe(false);
   });
 
   it('installs idempotent entries while retaining third-party hooks', async () => {

@@ -7,7 +7,9 @@ import {
   CODEX_HOOK_CONFIG_DIR,
   CODEX_HOOK_CONFIG_NAME,
   CODEX_HOOK_EVENTS,
+  CODEX_HOOK_LIMITS,
   CODEX_HOOK_SCRIPT_NAME,
+  CODEX_HOOK_TIMEOUT_SECONDS,
   CODEX_SETTINGS_FRESH_FILE_MODE,
   CODEX_SETTINGS_TMP_SUFFIX,
 } from './constants.js';
@@ -162,6 +164,48 @@ export function hasLegacyHookCommands(): boolean {
   }
 }
 
+/** The hook definition for one event, honouring Codex's per-event limits. */
+function handlerFor(event: (typeof CODEX_HOOK_EVENTS)[number], command: string): HookHandler {
+  const limits = CODEX_HOOK_LIMITS[event] ?? { timeout: CODEX_HOOK_TIMEOUT_SECONDS, async: true };
+  return {
+    type: 'command',
+    command,
+    timeout: limits.timeout,
+    // Omitted entirely for a synchronous handler, exactly as Codex expects it.
+    ...(limits.async ? { async: true } : {}),
+  };
+}
+
+/**
+ * Are any of OUR entries set up in a way Codex warns about (a SessionEnd/Interrupt timeout above
+ * its 3s cap, or an async SessionEnd)? Such entries are rewritten by the next install.
+ */
+export function hasOutdatedHandlerSettings(): boolean {
+  try {
+    const { config } = readConfig();
+    const hooks = config.hooks;
+    if (!isRecord(hooks)) return false;
+    return CODEX_HOOK_EVENTS.some((event) => {
+      const entries = hooks[event];
+      if (!Array.isArray(entries)) return false;
+      return entries.some(
+        (entry) =>
+          isRecord(entry) &&
+          Array.isArray(entry.hooks) &&
+          entry.hooks.some((hook) => {
+            if (!isOurHook(hook)) return false;
+            const wanted = handlerFor(event, String(hook.command));
+            return (
+              hook.timeout !== wanted.timeout || (hook.async === true) !== (wanted.async === true)
+            );
+          }),
+      );
+    });
+  } catch {
+    return false;
+  }
+}
+
 export async function installHooks(command = ourCommand()): Promise<void> {
   mutateConfig((config) => {
     if (config.hooks === undefined) config.hooks = {};
@@ -177,7 +221,7 @@ export async function installHooks(command = ourCommand()): Promise<void> {
         ...cleaned.entries,
         {
           matcher: '',
-          hooks: [{ type: 'command', command, timeout: 5, async: true }],
+          hooks: [handlerFor(event, command)],
         },
       ];
       if (JSON.stringify(existing ?? []) !== JSON.stringify(next)) changed = true;
@@ -201,6 +245,75 @@ export async function uninstallHooks(): Promise<void> {
     if (Object.keys(config.hooks).length === 0) delete config.hooks;
     return changed;
   });
+}
+
+/**
+ * Are any of OUR entries the desktop-helper form? Codex only runs a hook it has reviewed, and it
+ * tracks approval by the hook's exact definition (`[hooks.state]` trusted_hash in config.toml), so
+ * the desktop keeps Codex on the node-script form users already approved. See
+ * installCodexScriptHooks in desktopHelperInstaller.ts.
+ */
+export function hasDesktopHelperCommands(): boolean {
+  try {
+    const { config } = readConfig();
+    const hooks = config.hooks;
+    if (!isRecord(hooks)) return false;
+    return Object.values(hooks).some(
+      (entries) =>
+        Array.isArray(entries) &&
+        entries.some(
+          (entry) =>
+            isRecord(entry) &&
+            Array.isArray(entry.hooks) &&
+            entry.hooks.some(
+              (hook) =>
+                isRecord(hook) &&
+                typeof hook.command === 'string' &&
+                isDesktopHelperCommand(hook.command),
+            ),
+        ),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Where the node-script form of the hook lives (its path is part of the trusted definition). */
+export function hookScriptPath(): string {
+  return scriptPath();
+}
+
+/**
+ * Copies `source` over the installed hook script when the content differs. Rewriting the script
+ * never changes hooks.json, so a hook the user already approved keeps running the newer code.
+ * Returns true when the installed script is current afterwards.
+ */
+export function refreshHookScript(source: string): boolean {
+  const destination = scriptPath();
+  try {
+    const wanted = fs.readFileSync(source);
+    const existing = fs.existsSync(destination) ? fs.readFileSync(destination) : undefined;
+    if (existing && existing.equals(wanted)) return true;
+    fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+    const temporary = `${destination}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, wanted, { mode: 0o700 });
+    fs.renameSync(temporary, destination);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** True when the installed script differs from (or is missing versus) the packaged one. */
+export function isHookScriptStale(source: string): boolean {
+  try {
+    const destination = scriptPath();
+    return (
+      !fs.existsSync(destination) || !fs.readFileSync(destination).equals(fs.readFileSync(source))
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function copyHookScript(extensionPath: string): boolean {

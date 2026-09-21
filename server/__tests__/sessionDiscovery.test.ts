@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createProviderRegistry } from '../src/providerRegistry.js';
 import { claudeProvider, codexProvider } from '../src/providers/index.js';
 import { createRuntimeHost } from '../src/runtimeHost.js';
-import { discoverSessions, WRITER_QUIET_MS } from '../src/sessionDiscovery.js';
+import { discoverSessions, locateTranscript, WRITER_QUIET_MS } from '../src/sessionDiscovery.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -46,7 +46,7 @@ async function claudeTranscript(root: string, id: string, cwd: string, ageMs = 2
 async function codexTranscript(root: string, id: string, cwd: string, ageMs = 2 * HOUR) {
   const dir = path.join(root, '2026', '09', '20');
   await mkdir(dir, { recursive: true });
-  const file = path.join(dir, `rollout-${id}.jsonl`);
+  const file = path.join(dir, `rollout-2026-09-20T10-54-56-${id}.jsonl`);
   await writeFile(
     file,
     `${JSON.stringify({ type: 'session_meta', payload: { id, cwd } })}\n${JSON.stringify({ pad })}\n`,
@@ -126,6 +126,74 @@ describe('discoverSessions', () => {
     expect(discoverSessions(claudeProvider, 'claude', { roots: ['/definitely/not/here'] })).toEqual(
       [],
     );
+  });
+});
+
+describe('locateTranscript', () => {
+  it('finds a Claude transcript by session id and a Codex one by its embedded id', async () => {
+    const claudeRoot = await tmp();
+    const codexRoot = await tmp();
+    const c = await claudeTranscript(claudeRoot, 'claude-id-1', '/w');
+    const x = await codexTranscript(codexRoot, '01a0c29c-2335-7ba0-be90-be0c44e4da25', '/w');
+    expect(locateTranscript(claudeProvider, 'claude-id-1', [claudeRoot])).toBe(c);
+    expect(
+      locateTranscript(codexProvider, '01a0c29c-2335-7ba0-be90-be0c44e4da25', [codexRoot]),
+    ).toBe(x);
+  });
+
+  it('never matches a partial id, never leaves the roots, and rejects path-like ids', async () => {
+    const root = await tmp();
+    const outside = await tmp();
+    await claudeTranscript(root, 'abc-123', '/w');
+    const escaped = await claudeTranscript(outside, 'secret', '/w');
+    expect(locateTranscript(claudeProvider, 'abc', [root])).toBeUndefined();
+    expect(locateTranscript(claudeProvider, '123', [root])).toBeUndefined();
+    expect(locateTranscript(claudeProvider, 'secret', [root])).toBeUndefined();
+    expect(
+      locateTranscript(claudeProvider, `../${path.basename(path.dirname(escaped))}/secret`, [root]),
+    ).toBeUndefined();
+    expect(locateTranscript(claudeProvider, '', [root])).toBeUndefined();
+  });
+});
+
+describe('conversation history for a session first seen mid-flight', () => {
+  it('finds the transcript itself when hooks never named one', async () => {
+    const root = await tmp();
+    const claudeRoot = path.join(root, 'claude-projects');
+    const dir = path.join(claudeRoot, 'p');
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, 'mid-flight.jsonl'),
+      [
+        JSON.stringify({ type: 'user', content: 'Hello there' }),
+        JSON.stringify({ type: 'assistant', content: [{ type: 'text', text: 'Hi back' }] }),
+      ].join('\n'),
+    );
+    const host = createRuntimeHost({
+      profileRoot: path.join(root, 'desktop'),
+      hookToken: 't',
+      sessionRoots: { claude: [claudeRoot], codex: [] },
+      providers: createProviderRegistry([claudeProvider, codexProvider], async () => ({
+        executable: process.execPath,
+        version: 'test',
+      })),
+    });
+    await host.start();
+    try {
+      const { port } = host.hookServer.registration()!;
+      // A PreToolUse with no transcript_path: the agent is created without one.
+      await fetch(`http://127.0.0.1:${port}/api/hooks/claude`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer t', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: 'mid-flight', hook_event_name: 'Stop', cwd: root }),
+      });
+      const [agent] = host.snapshot().agents;
+      expect(agent!.transcriptPath).toBeUndefined();
+      const conversation = host.getAgentConversation(agent!.agentId);
+      expect(conversation.messages.map((m) => m.text)).toEqual(['Hello there', 'Hi back']);
+    } finally {
+      await host.stop('test');
+    }
   });
 });
 

@@ -40,6 +40,8 @@ declare global {
       getAreaTiles?: () => Array<{ col: number; row: number; label: string }>;
       /** Folder→Area mappings received by OfficeState. */
       getAreaMappings?: () => Record<string, string[]>;
+      /** Same as clicking the agent's character: opens its conversation drawer where supported. */
+      openConversation?: (id: number) => void;
       /** Current zoom and pan (device px), to check the office is fitted and centred. */
       getViewport?: () => { zoom: number; panX: number; panY: number };
       /** Effective show-areas gate (settings toggle OR active area edit). */

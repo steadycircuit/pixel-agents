@@ -1,11 +1,15 @@
 import type { ProviderId } from '../../core/src/desktop/types.js';
-
 import type { RuntimeHost } from '../../server/src/runtimeHost.js';
 import { type HooksConfigurationService, updateHooksPreference } from './hooksPreference.js';
 
 export interface AdoptionNativeServices extends Required<HooksConfigurationService> {
-  /** Are any of our entries the pre-desktop Node-script form, which never reaches the desktop app? */
-  hasLegacyHooks(providerId: ProviderId): Promise<boolean>;
+  /**
+   * Is what is on disk not the form the desktop wants for this provider? Claude wants the
+   * standalone helper (old Node-script entries never reach the app). Codex wants the reviewed
+   * node-script form with a current script (Codex only runs hooks whose exact definition the user
+   * approved, so switching it to the helper silently disables the hooks).
+   */
+  needsUpgrade(providerId: ProviderId): Promise<boolean>;
 }
 
 export type AdoptionOutcome = 'not-installed' | 'declined' | 'upgraded' | 'recorded' | 'current';
@@ -13,9 +17,10 @@ export type AdoptionOutcome = 'not-installed' | 'declined' | 'upgraded' | 'recor
 /**
  * Brings hooks that are ALREADY on disk under the desktop app, once at startup.
  *
- * - Old Node-script entries do not forward to the desktop app, so a provider that "has hooks" can
- *   still never show up. They are replaced with the desktop helper (same scope, same events: the
- *   install only swaps our own entries, so no fresh consent is needed).
+ * - A provider's hooks can be installed yet never reach the app (Claude's old Node-script entries; a
+ *   Codex script that predates the desktop). They are brought to the desktop's form for that
+ *   provider (same scope, same events: the install only swaps our own entries, so no fresh consent
+ *   is needed).
  * - Our entries with no recorded answer are granted silently, as the first-run consent policy says:
  *   the only population asked is the one with nothing installed.
  * - An explicit decline is respected, and a provider with nothing installed is left to the
@@ -47,7 +52,7 @@ async function adoptOne(
   const consent = host.consent.get(providerId);
   if (consent === 'declined') return 'declined';
 
-  if (await native.hasLegacyHooks(providerId)) {
+  if (await native.needsUpgrade(providerId)) {
     const result = await updateHooksPreference(host, native, {
       providerId,
       enabled: true,

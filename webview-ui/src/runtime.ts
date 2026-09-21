@@ -20,6 +20,11 @@ const runtime: Runtime =
 export const isBrowserRuntime = runtime === 'browser';
 export const isDesktopRuntime = runtime === 'desktop';
 
+/** The conversation drawer (history + replies) needs a host that can read transcripts and run a
+ *  managed turn: the standalone server and the desktop app. Embedded editors have terminals to
+ *  focus instead. */
+export const hasConversationDrawer = isBrowserRuntime || isDesktopRuntime;
+
 /**
  * True only under the Playwright e2e harness, which sets `__PIXEL_AGENTS_E2E`
  * via `addInitScript` before any app code runs (so it's set in every frame,

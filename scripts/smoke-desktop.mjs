@@ -323,10 +323,22 @@ async function main() {
     await mkdir(projectA);
     await mkdir(projectB);
     // The same session id in both providers must not collide.
+    const transcript = path.join(runDir, 'transcript.jsonl');
+    await writeFile(
+      transcript,
+      [
+        JSON.stringify({ type: 'user', content: 'Hello from the smoke test' }),
+        JSON.stringify({
+          type: 'assistant',
+          content: [{ type: 'text', text: 'Conversation history works' }],
+        }),
+      ].join('\n') + '\n', // a complete last line, as real transcripts have
+    );
     await sendHook('claude', {
       session_id: 'shared',
       hook_event_name: 'SessionStart',
       cwd: projectA,
+      transcript_path: transcript,
     });
     await sendHook('codex', { session_id: 'shared', event: 'SessionStart', cwd: projectB });
     await waitFor(
@@ -341,6 +353,25 @@ async function main() {
       providers.join(),
     );
     await page.screenshot({ path: path.join(runDir, 'providers.png') });
+
+    // Selecting an agent opens its conversation drawer with the transcript history.
+    const claudeId = (await app1.characters()).find((c) => c.providerId === 'claude').id;
+    await page.evaluate((id) => window.__pixelAgentsTestHooks.openConversation(id), claudeId);
+    const drawerText = () =>
+      page.evaluate(
+        () => document.querySelector('.conversation-drawer')?.textContent ?? 'NO DRAWER',
+      );
+    let shown = '';
+    try {
+      await waitFor('the conversation drawer to show the history', async () => {
+        shown = await drawerText();
+        return shown.includes('Conversation history works');
+      });
+    } catch (error) {
+      throw new Error(`${error.message}; the drawer showed: ${shown.slice(0, 160)}`);
+    }
+    check('selecting an agent opens its conversation drawer with the transcript', true);
+    await page.evaluate(() => document.querySelector('.conversation-close')?.click());
 
     // The office is fitted to the window on load and again on resize.
     const viewport = () => page.evaluate(() => window.__pixelAgentsTestHooks.getViewport());

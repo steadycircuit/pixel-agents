@@ -5,7 +5,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { installHooks as installClaudeHooks } from './claude/claudeHookInstaller.js';
-import { installHooks as installCodexHooks } from './codex/codexHookInstaller.js';
+import {
+  installHooks as installCodexHooks,
+  refreshHookScript as refreshCodexScript,
+} from './codex/codexHookInstaller.js';
 
 export type DesktopHookProvider = 'claude' | 'codex';
 export interface DesktopHelperInstallOptions {
@@ -65,4 +68,17 @@ export async function installDesktopHelper(
 
 function hash(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+/**
+ * Codex hooks for the desktop app. Codex refuses to run a hook it has not reviewed and tracks
+ * approval by the hook's exact definition, so unlike Claude this does NOT use the versioned helper
+ * path (which would change on every release and re-trigger review). It installs the node-script
+ * form — the definition users already approved, at a path that never changes — and refreshes the
+ * script file behind it so it forwards to the desktop app. Approval survives app updates.
+ */
+export async function installCodexScriptHooks(scriptSource: string): Promise<void> {
+  if (!refreshCodexScript(scriptSource))
+    throw new Error('Could not install the Codex hook script (source missing or unwritable)');
+  await installCodexHooks(); // default command: node "<~/.pixel-agents/hooks/codex-hook.js>"
 }

@@ -34,7 +34,7 @@ import { createProviderRegistry, type DesktopProviderRegistry } from './provider
 import type { ConsentStore } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { providerRegistry as bundledProviders } from './providers/index.js';
-import { discoverSessions } from './sessionDiscovery.js';
+import { discoverSessions, locateTranscript } from './sessionDiscovery.js';
 
 export interface RuntimeHostDeps {
   profileRoot?: string;
@@ -133,6 +133,7 @@ export function createRuntimeHost(deps: RuntimeHostDeps = {}): RuntimeHost {
   let stopPromise: Promise<void> | undefined;
   let persistQueue = Promise.resolve();
   let catalog: AssetCatalog | undefined;
+  const locatedTranscripts = new Map<string, string>();
   const epoch = randomUUID();
   let current: DesktopSnapshot = {
     protocolVersion: 1,
@@ -612,8 +613,9 @@ export function createRuntimeHost(deps: RuntimeHostDeps = {}): RuntimeHost {
     getAgentConversation(agentId, cursor, limit) {
       const agent = current.agents.find((candidate) => candidate.agentId === agentId);
       if (!agent) throw new Error('NOT_FOUND');
-      const page = agent.transcriptPath
-        ? readConversationPage(agent.transcriptPath, cursor, limit)
+      const transcriptPath = agent.transcriptPath ?? locateKnownTranscript(agent);
+      const page = transcriptPath
+        ? readConversationPage(transcriptPath, cursor, limit)
         : { messages: [], historyRevision: 'unavailable' };
       return {
         sessionKey: agent.sessionKey,
@@ -715,6 +717,22 @@ export function createRuntimeHost(deps: RuntimeHostDeps = {}): RuntimeHost {
           workspaceKey(operation.cwd) === workspaceKey(cwd),
       );
     if (candidates.length === 1) processes.bindSession(candidates[0]!.operationId, sessionKey);
+  }
+
+  /** Sessions first seen mid-flight never named their transcript; find it once and remember it. */
+  function locateKnownTranscript(agent: DesktopAgent): string | undefined {
+    const key = `${agent.sessionKey.providerId}:${agent.sessionKey.sessionId}`;
+    const cached = locatedTranscripts.get(key);
+    if (cached) return cached;
+    const provider = providers.provider(agent.sessionKey.providerId);
+    if (!provider) return undefined;
+    const found = locateTranscript(
+      provider,
+      agent.sessionKey.sessionId,
+      deps.sessionRoots?.[agent.sessionKey.providerId],
+    );
+    if (found) locatedTranscripts.set(key, found);
+    return found;
   }
 
   async function scanPreviousSessions(): Promise<PreviousSessionRecord[]> {
